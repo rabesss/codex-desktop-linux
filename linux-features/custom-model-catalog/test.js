@@ -1030,6 +1030,8 @@ test("model query patch preserves explicit providers from shared catalog rows", 
   assert.equal(sandbox.__codexLinuxCustomModelProviders.get("openrouter-qwen3-coder"), "openrouter");
   assert.equal(sandbox.__codexLinuxCustomModelProviders.get("cursor-zai-coding-glm-5-2"), "codex_shim");
   assert.equal(sandbox.__codexLinuxCustomModelProviders.has("missing-provider-row"), false);
+  assert.equal(sandbox.__codexLinuxCustomModelWireModels.get("openrouter-qwen3-coder"), "qwen/qwen3-coder");
+  assert.equal(sandbox.__codexLinuxCustomModelWireModels.get("cursor-zai-coding-glm-5-2"), "z-ai/glm-5.2");
   assert.deepEqual(
     JSON.parse(JSON.stringify(sandbox.__codexLinuxCustomModelProviderConfigs.get("openrouter"))),
     {
@@ -1098,6 +1100,7 @@ test("model query patch registers provider metadata for app-server supplied cust
   assert.equal(sandbox.result.data[0].model, "openrouter-qwen3-coder");
   assert.equal(sandbox.__codexLinuxCustomModelSlugs.has("openrouter-qwen3-coder"), true);
   assert.equal(sandbox.__codexLinuxCustomModelProviders.get("openrouter-qwen3-coder"), "openrouter");
+  assert.equal(sandbox.__codexLinuxCustomModelWireModels.get("openrouter-qwen3-coder"), "qwen/qwen3-coder");
   assert.equal(
     sandbox.__codexLinuxCustomModelProviderConfigs.get("openrouter").base_url,
     "https://openrouter.ai/api/v1",
@@ -1148,14 +1151,26 @@ test("model query patch never registers an official slug for shim routing", asyn
   const sandbox = {
     fetch: async () => ({
       ok: true,
-      json: async () => [
-        {
-          slug: "gpt-5.5",
-          display_name: "Captured GPT-5.5",
-          provider_display_name: "Untrusted custom provider",
-          model_catalog_json: "/tmp/untrusted-catalog.json",
+      json: async () => ({
+        version: 1,
+        providers: {
+          untrusted_provider: {
+            name: "Untrusted custom provider",
+            base_url: "http://127.0.0.1:9999/v1",
+            wire_api: "responses",
+          },
         },
-      ],
+        models: [
+          {
+            slug: "gpt-5.5",
+            model: "captured-gpt-5.5",
+            model_provider: "untrusted_provider",
+            display_name: "Captured GPT-5.5",
+            provider_display_name: "Untrusted custom provider",
+            model_catalog_json: "/tmp/untrusted-catalog.json",
+          },
+        ],
+      }),
     }),
   };
 
@@ -1171,6 +1186,8 @@ test("model query patch never registers an official slug for shim routing", asyn
   assert.equal(sandbox.result.data[0].displayName, "GPT-5.5");
   assert.equal(sandbox.__codexLinuxCustomModelSlugs.has("gpt-5.5"), false);
   assert.equal(sandbox.__codexLinuxCustomModelCatalogPaths.has("gpt-5.5"), false);
+  assert.equal(sandbox.__codexLinuxCustomModelProviders.has("gpt-5.5"), false);
+  assert.equal(sandbox.__codexLinuxCustomModelWireModels.has("gpt-5.5"), false);
 });
 
 test("model query patch augments the model list request", () => {
@@ -1443,6 +1460,10 @@ test("start conversation routing helper routes explicit providers without inject
         },
       ],
     ]),
+    __codexLinuxCustomModelWireModels: new Map([
+      ["openrouter-qwen3-coder", "qwen/qwen3-coder"],
+      ["cursor-zai-coding-glm-5-2", "z-ai/glm-5.2"],
+    ]),
     __codexLinuxCustomModelCatalogPaths: new Map([
       ["cursor-zai-coding-glm-5-2", "/tmp/codex-shim/custom_model_catalog.json"],
     ]),
@@ -1451,18 +1472,24 @@ test("start conversation routing helper routes explicit providers without inject
   vm.runInNewContext(
     [
       ROUTING_HELPER_SOURCE,
-      "direct=codexLinuxCustomModelApplyRouting({config:{model_provider:`openai`},modelProvider:null},`openrouter-qwen3-coder`);",
+      "direct=codexLinuxCustomModelApplyRouting({config:{model_provider:`openai`},modelProvider:null,collaborationMode:{settings:{model:`openrouter-qwen3-coder`,reasoning_effort:`high`}}},`openrouter-qwen3-coder`);",
       "shim=codexLinuxCustomModelApplyRouting({config:{model_provider:`openai`},modelProvider:null},`cursor-zai-coding-glm-5-2`);",
       "official=codexLinuxCustomModelApplyRouting({config:{model_provider:`openai`},modelProvider:null},`gpt-5.5`);",
     ].join(""),
     sandbox,
   );
 
+  assert.equal(sandbox.direct.model, "qwen/qwen3-coder");
   assert.equal(sandbox.direct.modelProvider, "openrouter");
+  assert.equal(sandbox.direct.config.model, "qwen/qwen3-coder");
   assert.equal(sandbox.direct.config.model_provider, "openrouter");
+  assert.equal(sandbox.direct.collaborationMode.settings.model, "qwen/qwen3-coder");
+  assert.equal(sandbox.direct.collaborationMode.settings.reasoning_effort, "high");
   assert.equal(sandbox.direct.config["model_providers.openrouter"].env_key, "OPENROUTER_API_KEY");
   assert.equal(sandbox.direct.config["model_providers.codex_shim"], undefined);
+  assert.equal(sandbox.shim.model, "z-ai/glm-5.2");
   assert.equal(sandbox.shim.modelProvider, "codex_shim");
+  assert.equal(sandbox.shim.config.model, "z-ai/glm-5.2");
   assert.equal(sandbox.shim.config.model_provider, "codex_shim");
   assert.equal(sandbox.shim.config.model_catalog_json, "/tmp/codex-shim/custom_model_catalog.json");
   assert.equal(sandbox.shim.config["model_providers.codex_shim"].base_url, "http://127.0.0.1:8765/v1");
@@ -1485,6 +1512,7 @@ test("turn start routing helper keeps explicit official payload models on the de
         },
       ],
     ]),
+    __codexLinuxCustomModelWireModels: new Map([["qa-direct-model", "vendor/qa-direct-v1"]]),
   };
 
   vm.runInNewContext(
@@ -1499,10 +1527,13 @@ test("turn start routing helper keeps explicit official payload models on the de
   assert.equal(sandbox.official.model, "gpt-5.4");
   assert.equal(sandbox.official.modelProvider, undefined);
   assert.equal(sandbox.official.config.model_provider, "openai");
+  assert.equal(sandbox.official.collaborationMode.settings.model, "qa-direct-model");
   assert.equal(sandbox.official.config["model_providers.qa_direct"], undefined);
-  assert.equal(sandbox.stale.model, "qa-direct-model");
+  assert.equal(sandbox.stale.model, "vendor/qa-direct-v1");
   assert.equal(sandbox.stale.modelProvider, "qa_direct");
+  assert.equal(sandbox.stale.config.model, "vendor/qa-direct-v1");
   assert.equal(sandbox.stale.config.model_provider, "qa_direct");
+  assert.equal(sandbox.stale.collaborationMode.settings.model, "vendor/qa-direct-v1");
   assert.equal(sandbox.stale.config["model_providers.qa_direct"].env_key, "QA_DIRECT_API_KEY");
 });
 
