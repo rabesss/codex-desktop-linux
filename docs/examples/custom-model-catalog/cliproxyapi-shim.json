@@ -19,6 +19,12 @@
       "max_context_window": 1000000,
       "auto_compact_token_limit": 165000,
       "truncation_policy": { "mode": "tokens", "limit": 48000 },
+      "default_reasoning_level": "medium",
+      "supported_reasoning_levels": [
+        { "effort": "low", "description": "Faster, lighter reasoning" },
+        { "effort": "medium", "description": "Balanced speed and reasoning" },
+        { "effort": "high", "description": "Deeper reasoning" }
+      ],
       "input_modalities": ["text"],
       "supports_tools": true,
       "supports_reasoning": true,

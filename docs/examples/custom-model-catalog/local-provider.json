@@ -20,6 +20,10 @@
       "max_context_window": 131072,
       "auto_compact_token_limit": 100000,
       "truncation_policy": { "mode": "tokens", "limit": 32000 },
+      "default_reasoning_level": "medium",
+      "supported_reasoning_levels": [
+        { "effort": "medium", "description": "Default non-reasoning compatibility level" }
+      ],
       "input_modalities": ["text"],
       "supports_tools": false,
       "supports_reasoning": false,

@@ -188,6 +188,18 @@ test("feature CLI wrapper injects a merged model catalog only for app-server", (
     fs.writeFileSync(
       customCatalog,
       JSON.stringify({
+        providers: {
+          openrouter: {
+            name: "OpenRouter",
+            base_url: "https://openrouter.ai/api/v1",
+            wire_api: "responses",
+          },
+          codex_shim: {
+            name: "Codex Shim",
+            base_url: "http://127.0.0.1:8765/v1",
+            wire_api: "responses",
+          },
+        },
         models: [
           {
             slug: "gpt-5.5",
@@ -197,8 +209,21 @@ test("feature CLI wrapper injects a merged model catalog only for app-server", (
             max_context_window: 1,
           },
           {
-            slug: "cursor-zai-coding-glm-5-2",
-            display_name: "CLIProxyAPI / Cursor Z.ai Coding / GLM 5.2",
+            slug: "openrouter-qwen3-coder",
+            model: "qwen/qwen3-coder",
+            model_provider: "openrouter",
+            display_name: "Qwen3 Coder",
+            provider_display_name: "OpenRouter",
+            visibility: "list",
+            context_window: 262144,
+            max_context_window: 262144,
+            auto_compact_token_limit: 210000,
+          },
+          {
+            slug: "shim-auto",
+            model: "codex-auto",
+            display_name: "Auto Router",
+            provider_display_name: "Codex Shim Router",
             visibility: "list",
             context_window: 1000000,
             max_context_window: 1000000,
@@ -228,11 +253,23 @@ test("feature CLI wrapper injects a merged model catalog only for app-server", (
     const merged = JSON.parse(fs.readFileSync(catalogPath, "utf8"));
     assert.deepEqual(
       merged.models.map((model) => model.slug).sort(),
-      ["cursor-zai-coding-glm-5-2", "gpt-5.5"],
+      ["gpt-5.5", "openrouter-qwen3-coder", "shim-auto"],
     );
     assert.equal(merged.models.find((model) => model.slug === "gpt-5.5").display_name, "GPT-5.5");
     assert.equal(merged.models.find((model) => model.slug === "gpt-5.5").context_window, 272000);
+    const directCustom = merged.models.find((model) => model.slug === "openrouter-qwen3-coder");
+    assert.equal(directCustom.model_provider, "openrouter");
+    assert.equal(directCustom.model, "qwen/qwen3-coder");
+    assert.equal(directCustom.default_reasoning_level, "medium");
+    assert.equal(directCustom.supported_reasoning_levels[1].effort, "medium");
+    assert.equal(directCustom.shell_type, "shell_command");
+    assert.equal(directCustom.supported_in_api, true);
+    assert.equal(directCustom.base_instructions.includes("custom model provider"), true);
+    const shimCustom = merged.models.find((model) => model.slug === "shim-auto");
+    assert.equal(shimCustom.model_provider, "codex_shim");
+    assert.equal(shimCustom.model, "codex-auto");
     assert.equal(merged.providers.codex_shim.base_url, "http://127.0.0.1:8765/v1");
+    assert.equal(merged.providers.openrouter.base_url, "https://openrouter.ai/api/v1");
 
     const versionOutput = childProcess.execFileSync("bash", [wrapper, "--version"], {
       encoding: "utf8",
@@ -521,6 +558,63 @@ test("model query patch preserves explicit providers from shared catalog rows", 
       wire_api: "chat",
       env_key: "OPENROUTER_API_KEY",
     },
+  );
+});
+
+test("model query patch registers provider metadata for app-server supplied custom rows", async () => {
+  const sandbox = {
+    fetch: async (url) => {
+      if (url === "http://127.0.0.1:8765/api/models") {
+        return { ok: false, json: async () => ({}) };
+      }
+      return {
+        ok: true,
+        json: async () => ({
+          version: 1,
+          providers: {
+            openrouter: {
+              name: "OpenRouter",
+              base_url: "https://openrouter.ai/api/v1",
+              wire_api: "responses",
+              env_key: "OPENROUTER_API_KEY",
+            },
+          },
+          models: [
+            {
+              slug: "openrouter-qwen3-coder",
+              display_name: "Qwen3 Coder",
+              provider_display_name: "OpenRouter",
+              model_provider: "openrouter",
+              model: "qwen/qwen3-coder",
+              context_window: 262144,
+              auto_compact_token_limit: 210000,
+            },
+          ],
+        }),
+      };
+    },
+  };
+
+  await vm.runInNewContext(
+    [
+      MODEL_QUERY_SHIM_HELPER_SOURCE,
+      "(async()=>{result=await codexLinuxCustomModelMergeListModels({data:[{model:`openrouter-qwen3-coder`,displayName:`Qwen3 Coder`,description:`Qwen3 Coder via OpenRouter.`}]})})()",
+    ].join(";"),
+    sandbox,
+  );
+
+  assert.equal(sandbox.result.data.length, 1);
+  assert.equal(sandbox.result.data[0].model, "openrouter-qwen3-coder");
+  assert.equal(sandbox.__codexLinuxCustomModelSlugs.has("openrouter-qwen3-coder"), true);
+  assert.equal(sandbox.__codexLinuxCustomModelProviders.get("openrouter-qwen3-coder"), "openrouter");
+  assert.equal(
+    sandbox.__codexLinuxCustomModelProviderConfigs.get("openrouter").base_url,
+    "https://openrouter.ai/api/v1",
+  );
+  assert.equal(
+    sandbox.__codexLinuxCustomModelRuntimeConfig.get("openrouter-qwen3-coder")
+      .model_auto_compact_token_limit,
+    210000,
   );
 });
 

@@ -251,6 +251,11 @@ merged catalog from Codex's cached official models plus the custom catalog, then
 starts app-server with `-c model_catalog_json=<merged>`. If either catalog is
 missing, the wrapper passes through without injecting a static catalog so
 official model metadata is not replaced by a custom-only list.
+The renderer also reads the configured custom catalog from the Desktop webview
+server at `/codex-linux/custom-model-catalog.json` so provider ids and provider
+configs remain available even when app-server has already supplied the visible
+custom model row. The legacy shim endpoint `http://127.0.0.1:8765/api/models`
+is still queried as an optional additional source.
 
 This is required: picker metadata alone does not change runtime context
 accounting or compaction behavior. The important fields are:
@@ -259,7 +264,14 @@ accounting or compaction behavior. The important fields are:
 - `auto_compact_token_limit`: when Desktop should compact a custom thread;
 - `truncation_policy.limit`: the maximum token budget Desktop keeps after
   truncation;
+- `default_reasoning_level` plus non-empty `supported_reasoning_levels`: required
+  by the current Codex app-server model catalog parser;
 - capability booleans such as image, reasoning, and verified tool support.
+
+The public catalog may omit app-server compatibility defaults such as reasoning
+levels, shell type, visibility, supported plans, and base instructions. The
+Desktop wrapper fills conservative defaults when writing its generated merged
+catalog, while preserving any explicit values supplied by the catalog source.
 
 The optional shim preserves live CLIProxyAPI metadata when it is available and
 fills known long-context fallbacks for maintained rows such as GLM 5.2 and MiniMax M3.

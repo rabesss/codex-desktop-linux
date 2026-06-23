@@ -39,6 +39,10 @@ static catalog. That keeps official OpenAI/Codex traffic on the direct `openai`
 provider while giving custom slugs native Codex model metadata for
 context-window, auto-compaction, and truncation behavior when both inputs are
 available.
+The wrapper also fills app-server compatibility defaults for compact custom
+rows, including reasoning levels, shell type, visibility, supported plans, and
+base instructions. Explicit catalog values win; missing legacy custom rows
+default to `codex_shim`, while official cache rows default to `openai`.
 
 Selector grouping is driven by catalog metadata, not by the global Codex
 provider setting. A clean install without this feature shows only official
@@ -46,13 +50,17 @@ rows. With this feature enabled, the Desktop webview reads catalog rows, groups
 them by `provider_display_name`, and expects the catalog source to de-duplicate
 visible `(provider_display_name, display_name)` pairs while preserving
 route-stable slugs for saved threads and overrides.
+The webview reads the configured catalog through the app's own loopback server
+at `/codex-linux/custom-model-catalog.json`; `http://127.0.0.1:8765/api/models`
+is still queried as an optional live shim compatibility source.
 
 Required patch points:
 
 - `models-and-reasoning-efforts-*.js`: remove the provider allowlist gate so
   custom rows are visible and group model options by provider metadata.
-- `model-queries-*.js`: merge rows from a shared custom catalog, with
-  `http://127.0.0.1:8765/api/models` retained as the shim compatibility source.
+- `model-queries-*.js`: merge rows from a shared custom catalog, register
+  provider metadata from app-server-supplied rows, and keep
+  `http://127.0.0.1:8765/api/models` as an optional shim compatibility source.
 - `app-server-manager-signals-*.js`: apply each custom row's provider only for
   custom route slugs at start, fork, and resume; preserve provider/session config during
   `thread/fork`; refresh dynamic tools on resume; force provider resume after
