@@ -1,0 +1,16 @@
+{
+  "id": "custom-model-catalog",
+  "title": "Custom Model Catalog",
+  "description": "Adds strict Linux patch points for provider-aware custom model rows from a local adapter catalog.",
+  "defaultEnabled": false,
+  "entrypoints": {
+    "patchDescriptors": "./patch.js"
+  },
+  "resources": [
+    {
+      "source": "./codex-cli-wrapper",
+      "target": ".codex-linux/features/custom-model-catalog/codex-cli-wrapper",
+      "mode": "0755"
+    }
+  ]
+}

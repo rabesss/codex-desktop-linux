@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "providers": {
+    "codex_shim": {
+      "name": "Codex Shim",
+      "base_url": "http://127.0.0.1:8765/v1",
+      "wire_api": "responses"
+    }
+  },
+  "models": [
+    {
+      "slug": "shim-auto",
+      "model": "codex-auto",
+      "model_provider": "codex_shim",
+      "display_name": "Auto Router",
+      "provider_display_name": "Codex Shim Router",
+      "description": "Auto Router via Codex Shim Router.",
+      "context_window": 262144,
+      "max_context_window": 262144,
+      "auto_compact_token_limit": 210000,
+      "truncation_policy": { "mode": "tokens", "limit": 64000 },
+      "input_modalities": ["text"],
+      "supports_tools": true,
+      "supports_reasoning": true,
+      "supports_streaming": true,
+      "source": "codex-shim"
+    }
+  ]
+}

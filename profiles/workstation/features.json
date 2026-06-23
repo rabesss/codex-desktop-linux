@@ -1,0 +1,8 @@
+{
+  "enabled": [
+    "open-target-discovery",
+    "codex-wrapper-updater",
+    "brave-origin-browser-control",
+    "custom-model-catalog"
+  ]
+}

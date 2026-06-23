@@ -1,0 +1,7 @@
+{
+  "enabled": [
+    "open-target-discovery",
+    "codex-wrapper-updater",
+    "custom-model-catalog"
+  ]
+}

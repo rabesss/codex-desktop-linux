@@ -1,0 +1,10 @@
+{
+  "id": "brave-origin-browser-control",
+  "title": "Brave Origin Browser Control",
+  "description": "Adds disabled-by-default Brave Origin Nightly support to the bundled Chrome browser-control plugin on Linux.",
+  "defaultEnabled": false,
+  "entrypoints": {
+    "patches": "./patch.js",
+    "stageHook": "./stage.sh"
+  }
+}

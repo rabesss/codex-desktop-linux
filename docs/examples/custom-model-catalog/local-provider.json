@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "providers": {
+    "local_lm_studio": {
+      "name": "Local LM Studio",
+      "base_url": "http://127.0.0.1:1234/v1",
+      "wire_api": "chat",
+      "env_key": "LOCAL_LM_STUDIO_API_KEY"
+    }
+  },
+  "models": [
+    {
+      "slug": "local-qwen3-coder",
+      "model": "qwen3-coder",
+      "model_provider": "local_lm_studio",
+      "display_name": "Qwen3 Coder Local",
+      "provider_display_name": "Local LM Studio",
+      "description": "Qwen3 Coder Local via Local LM Studio.",
+      "context_window": 131072,
+      "max_context_window": 131072,
+      "auto_compact_token_limit": 100000,
+      "truncation_policy": { "mode": "tokens", "limit": 32000 },
+      "input_modalities": ["text"],
+      "supports_tools": false,
+      "supports_reasoning": false,
+      "supports_streaming": true,
+      "source": "user-catalog"
+    }
+  ]
+}

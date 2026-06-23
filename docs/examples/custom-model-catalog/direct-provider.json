@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "providers": {
+    "openrouter": {
+      "name": "OpenRouter",
+      "base_url": "https://openrouter.ai/api/v1",
+      "wire_api": "responses",
+      "env_key": "OPENROUTER_API_KEY"
+    }
+  },
+  "models": [
+    {
+      "slug": "openrouter-qwen3-coder",
+      "model": "qwen/qwen3-coder",
+      "model_provider": "openrouter",
+      "display_name": "Qwen3 Coder",
+      "provider_display_name": "OpenRouter",
+      "description": "Qwen3 Coder via OpenRouter.",
+      "context_window": 262144,
+      "max_context_window": 262144,
+      "auto_compact_token_limit": 210000,
+      "truncation_policy": { "mode": "tokens", "limit": 64000 },
+      "input_modalities": ["text"],
+      "supports_tools": true,
+      "supports_reasoning": true,
+      "supports_streaming": true,
+      "source": "user-catalog"
+    }
+  ]
+}

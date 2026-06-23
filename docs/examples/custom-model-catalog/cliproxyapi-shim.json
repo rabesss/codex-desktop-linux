@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "providers": {
+    "codex_shim": {
+      "name": "Codex Shim",
+      "base_url": "http://127.0.0.1:8765/v1",
+      "wire_api": "responses"
+    }
+  },
+  "models": [
+    {
+      "slug": "cliproxyapi-zai-glm-5-2",
+      "model": "z-ai/glm-5.2",
+      "model_provider": "codex_shim",
+      "display_name": "GLM 5.2",
+      "provider_display_name": "CLIProxyAPI / Z.ai Coding",
+      "description": "GLM 5.2 via CLIProxyAPI / Z.ai Coding.",
+      "context_window": 1000000,
+      "max_context_window": 1000000,
+      "auto_compact_token_limit": 165000,
+      "truncation_policy": { "mode": "tokens", "limit": 48000 },
+      "input_modalities": ["text"],
+      "supports_tools": true,
+      "supports_reasoning": true,
+      "supports_streaming": true,
+      "source": "codex-shim-cliproxyapi-discovery",
+      "model_catalog_json": "custom_model_catalog.json"
+    }
+  ]
+}

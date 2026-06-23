@@ -1,0 +1,25 @@
+*.dmg
+node_modules/
+__pycache__/
+*.py[cod]
+codex-app/
+codex-app.backup-*/
+codex-*-app/
+codex-app-next/
+bin/codex-*
+target/
+dist/
+dist-next/
+linux-features/features.json
+linux-features/local/
+local-reference/
+upstream-reference/
+reference-checkouts/
+.idea/
+.claude/
+.codex/
+.codegraph/
+
+# graphify
+graphify-out/
+.graphify_*
