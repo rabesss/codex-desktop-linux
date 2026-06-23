@@ -42,9 +42,11 @@ keeps official OpenAI/Codex traffic on the direct `openai` provider while
 giving custom slugs native Codex model metadata for context-window,
 auto-compaction, and truncation behavior when both inputs are available.
 The wrapper also fills app-server compatibility defaults for compact custom
-rows, including reasoning levels, shell type, visibility, supported plans, and
-base instructions. Explicit catalog values win; missing legacy custom rows
-default to `codex_shim`, while official cache rows default to `openai`.
+catalog rows, including reasoning levels, shell type, visibility, supported
+plans, and base instructions. Explicit catalog values win; catalog rows that
+omit `model_provider` default to `codex_shim` for compatibility, while
+official cache rows default to `openai`. Slug prefixes alone never make a row
+custom-routed; the slug must be present in an accepted catalog source.
 
 Selector grouping is driven by catalog metadata, not by the global Codex
 provider setting. A clean install without this feature shows only official

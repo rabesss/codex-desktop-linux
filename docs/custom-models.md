@@ -154,7 +154,7 @@ The `custom-model-catalog` feature patches four Desktop responsibilities:
 
 - make custom catalog rows visible in the normal model picker;
 - merge a shared custom catalog into `model/list`;
-- route only custom slugs through their declared provider;
+- route only accepted catalog slugs through their declared provider;
 - preserve model, provider, provider config, native model catalog, and dynamic
   tools across thread start, fork, and resume.
 
@@ -229,6 +229,8 @@ Desktop-facing labels are intentionally split:
   `CLIProxyAPI / CommandCode`.
 - `slug` stays route-stable, even when it contains a legacy route prefix such
   as `cursor-`, because saved threads and per-model overrides depend on it.
+  The prefix is not a routing signal; Desktop routes a slug as custom only
+  after it appears in an accepted catalog source.
 
 Do not encode transient local service names, account names, or internal relay
 labels into `display_name`.

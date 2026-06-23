@@ -1189,9 +1189,9 @@ test("recent thread patch preserves current upstream state-db options", () => {
   assert.match(patched, /useStateDbOnly:n=!1/);
 });
 
-test("start conversation routing helper routes custom slugs through codex_shim only", () => {
+test("start conversation routing helper routes only catalog-registered slugs", () => {
   const sandbox = {
-    __codexLinuxCustomModelSlugs: new Set(["provider-specific-custom"]),
+    __codexLinuxCustomModelSlugs: new Set(["opencode-go-kimi-k2-6", "provider-specific-custom"]),
     __codexLinuxCustomModelCatalogPaths: new Map([
       ["opencode-go-kimi-k2-6", "/tmp/codex-shim/custom_model_catalog.json"],
     ]),
@@ -1234,12 +1234,12 @@ test("start conversation routing helper routes custom slugs through codex_shim o
   assert.equal(sandbox.custom.config["model_providers.codex_shim"].base_url, "http://127.0.0.1:8765/v1");
   assert.equal(sandbox.official.config.model_catalog_json, undefined);
   assert.equal(sandbox.official.config.model_context_window, undefined);
-  assert.equal(sandbox.crof.modelProvider, "codex_shim");
-  assert.equal(sandbox.composer.modelProvider, "codex_shim");
-  assert.equal(sandbox.cursor.modelProvider, "codex_shim");
+  assert.equal(sandbox.crof.modelProvider, null);
+  assert.equal(sandbox.composer.modelProvider, null);
+  assert.equal(sandbox.cursor.modelProvider, null);
   assert.equal(sandbox.registered.modelProvider, "codex_shim");
   assert.equal(sandbox.autoReview.modelProvider, null);
-  assert.equal(sandbox.autoRouter.modelProvider, "codex_shim");
+  assert.equal(sandbox.autoRouter.modelProvider, null);
 });
 
 test("start conversation routing helper routes explicit providers without injecting codex_shim", () => {
@@ -1405,7 +1405,18 @@ test("fork conversation routing preserves Electron 42 thread source", () => {
 });
 
 test("thread settings routing preserves custom provider on existing-thread model switches", () => {
-  const sandbox = {};
+  const sandbox = {
+    __codexLinuxCustomModelSlugs: new Set([
+      "commandcode-minimax-m2-7",
+      "opencode-zen-minimax-m3-free",
+      "cursor-zai-coding-glm-5-2",
+    ]),
+    __codexLinuxCustomModelProviders: new Map([
+      ["commandcode-minimax-m2-7", "codex_shim"],
+      ["opencode-zen-minimax-m3-free", "codex_shim"],
+      ["cursor-zai-coding-glm-5-2", "codex_shim"],
+    ]),
+  };
 
   vm.runInNewContext(
     [
@@ -1483,6 +1494,8 @@ test("turn start routing patch rewrites legacy top-level-only routing hook", () 
 
 test("fork conversation routing leaves official models on the default provider", () => {
   const sandbox = {
+    __codexLinuxCustomModelSlugs: new Set(["opencode-zen-minimax-m3-free"]),
+    __codexLinuxCustomModelProviders: new Map([["opencode-zen-minimax-m3-free", "codex_shim"]]),
     officialConversation: {
       latestModel: "gpt-5.5",
       latestCollaborationMode: { settings: { model: "gpt-5.5" } },
