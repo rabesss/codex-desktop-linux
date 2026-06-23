@@ -250,12 +250,21 @@ def reasoning_levels(model):
             return converted
     return list(DEFAULT_REASONING_LEVELS)
 
+def explicit_provider_id(model):
+    for key in ("model_provider", "modelProvider"):
+        value = model.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
 def normalize_model(model, default_provider, providers, priority):
     normalized = dict(model)
     slug = string_value(normalized.get("slug"))
     if not slug:
         return None
-    provider_id = string_value(normalized.get("model_provider") or normalized.get("modelProvider")) or default_provider
+    provider_id = explicit_provider_id(normalized) or default_provider
+    if not provider_id:
+        return None
     display_name = (
         string_value(normalized.get("display_name"))
         or string_value(normalized.get("displayName"))
@@ -336,10 +345,14 @@ for index, model in enumerate(official_models):
     normalized = normalize_model(model, "openai", all_providers, 10000 - index)
     if normalized:
         merged[normalized["slug"]] = normalized
+accepted_custom_model = False
 for index, model in enumerate(custom_models):
-    normalized = normalize_model(model, "codex_shim", all_providers, 1000 - index)
+    normalized = normalize_model(model, None, all_providers, 1000 - index)
     if normalized:
+        accepted_custom_model = True
         merged.setdefault(normalized["slug"], normalized)
+if not accepted_custom_model:
+    raise SystemExit(1)
 
 providers = {}
 providers.update(custom_providers)

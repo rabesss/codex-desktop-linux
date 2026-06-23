@@ -44,9 +44,10 @@ auto-compaction, and truncation behavior when both inputs are available.
 The wrapper also fills app-server compatibility defaults for compact custom
 catalog rows, including reasoning levels, shell type, visibility, supported
 plans, and base instructions. Explicit catalog values win; catalog rows that
-omit `model_provider` default to `codex_shim` for compatibility, while
-official cache rows default to `openai`. Slug prefixes alone never make a row
-custom-routed; the slug must be present in an accepted catalog source.
+omit both `model_provider` and `modelProvider` are ignored, while official
+cache rows default to `openai`. Slug prefixes alone never make a row
+custom-routed; the slug must be present in an accepted catalog source with an
+explicit provider.
 
 Selector grouping is driven by catalog metadata, not by the global Codex
 provider setting. A clean install without this feature shows only official

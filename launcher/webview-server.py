@@ -158,10 +158,22 @@ def _catalog_models_and_providers(data):
         [
             model
             for model in models
-            if isinstance(model, dict) and isinstance(model.get("slug"), str)
+            if (
+                isinstance(model, dict)
+                and isinstance(model.get("slug"), str)
+                and _model_has_explicit_provider(model)
+            )
         ],
         providers,
     )
+
+
+def _model_has_explicit_provider(model):
+    for key in ("model_provider", "modelProvider"):
+        value = model.get(key)
+        if isinstance(value, str) and value.strip():
+            return True
+    return False
 
 
 def _custom_model_catalog_payload():

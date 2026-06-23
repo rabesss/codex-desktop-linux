@@ -285,12 +285,20 @@ test("feature CLI wrapper injects a merged model catalog only for app-server", (
           {
             slug: "shim-auto",
             model: "codex-auto",
+            model_provider: "codex_shim",
             display_name: "Auto Router",
             provider_display_name: "Codex Shim Router",
             visibility: "list",
             context_window: 1000000,
             max_context_window: 1000000,
             auto_compact_token_limit: 165000,
+          },
+          {
+            slug: "missing-provider-auto",
+            model: "missing-provider-auto",
+            display_name: "Missing Provider Auto",
+            visibility: "list",
+            context_window: 128000,
           },
         ],
       }),
@@ -335,6 +343,7 @@ test("feature CLI wrapper injects a merged model catalog only for app-server", (
     const shimCustom = merged.models.find((model) => model.slug === "shim-auto");
     assert.equal(shimCustom.model_provider, "codex_shim");
     assert.equal(shimCustom.model, "codex-auto");
+    assert.equal(merged.models.find((model) => model.slug === "missing-provider-auto"), undefined);
     assert.equal(merged.providers.codex_shim.base_url, "http://127.0.0.1:8765/v1");
     assert.equal(merged.providers.openrouter.base_url, "https://openrouter.ai/api/v1");
 
@@ -381,7 +390,10 @@ test("feature CLI wrapper merges default user and shim catalog sources", async (
       path.join(codexHome, "custom-models.json"),
       JSON.stringify({
         providers: { openrouter: { name: "OpenRouter", base_url: "https://openrouter.ai/api/v1" } },
-        models: [{ slug: "openrouter-qwen3-coder", model_provider: "openrouter", display_name: "Qwen3 Coder" }],
+        models: [
+          { slug: "openrouter-qwen3-coder", model_provider: "openrouter", display_name: "Qwen3 Coder" },
+          { slug: "missing-provider-user", display_name: "Missing Provider User" },
+        ],
       }),
     );
     fs.writeFileSync(
@@ -508,7 +520,10 @@ test("webview catalog route merges default user and shim catalog sources", async
       path.join(codexHome, "custom-models.json"),
       JSON.stringify({
         providers: { openrouter: { name: "OpenRouter" } },
-        models: [{ slug: "openrouter-qwen3-coder", model_provider: "openrouter" }],
+        models: [
+          { slug: "openrouter-qwen3-coder", model_provider: "openrouter" },
+          { slug: "missing-provider-webview" },
+        ],
       }),
     );
     fs.writeFileSync(
@@ -835,6 +850,7 @@ test("model query patch merges shim catalog rows into Desktop model list data", 
           slug: "opencode-go-kimi-k2-6",
           display_name: "CLIProxyAPI / OpenCode Go / Kimi K2.6",
           provider_display_name: "CLIProxyAPI / OpenCode Go",
+          model_provider: "codex_shim",
           model: "kimi-k2.6",
           input_modalities: ["text", "image"],
           supports_tools: true,
@@ -917,6 +933,12 @@ test("model query patch preserves explicit providers from shared catalog rows", 
             upstream_model_id: "z-ai/glm-5.2",
             model_catalog_json: "/tmp/codex-shim/custom_model_catalog.json",
           },
+          {
+            slug: "missing-provider-row",
+            display_name: "Missing Provider Row",
+            provider_display_name: "Missing Provider",
+            upstream_model_id: "missing-provider-row",
+          },
         ],
       }),
     }),
@@ -937,8 +959,10 @@ test("model query patch preserves explicit providers from shared catalog rows", 
   assert.equal(direct.provider, "openrouter");
   assert.equal(direct.providerDisplayName, "OpenRouter");
   assert.equal(shim.modelProvider, "codex_shim");
+  assert.equal(sandbox.result.data.find((row) => row.model === "missing-provider-row"), undefined);
   assert.equal(sandbox.__codexLinuxCustomModelProviders.get("openrouter-qwen3-coder"), "openrouter");
   assert.equal(sandbox.__codexLinuxCustomModelProviders.get("cursor-zai-coding-glm-5-2"), "codex_shim");
+  assert.equal(sandbox.__codexLinuxCustomModelProviders.has("missing-provider-row"), false);
   assert.deepEqual(
     JSON.parse(JSON.stringify(sandbox.__codexLinuxCustomModelProviderConfigs.get("openrouter"))),
     {
@@ -1016,11 +1040,13 @@ test("model query patch deduplicates identical provider and display rows", async
           slug: "cursor-zai-coding-glm-5-2",
           display_name: "CLIProxyAPI / Cursor Z.ai Coding / GLM 5.2",
           provider_display_name: "CLIProxyAPI / Cursor Z.ai Coding",
+          model_provider: "codex_shim",
         },
         {
           slug: "cursor-zai-coding-glm-5-2-44",
           display_name: "CLIProxyAPI / Cursor Z.ai Coding / GLM 5.2",
           provider_display_name: "CLIProxyAPI / Cursor Z.ai Coding",
+          model_provider: "codex_shim",
         },
       ],
     }),
