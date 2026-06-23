@@ -753,7 +753,7 @@ test("shared custom model catalog schema examples stay public-safe and provider-
   ];
 
   const schema = JSON.parse(fs.readFileSync(schemaPath, "utf8"));
-  assert.equal(schema.$id, "https://github.com/rabesss/codex-desktop-linux/schemas/custom-model-catalog.schema.json");
+  assert.equal(schema.$id, "https://github.com/rabesss/codex-linux/schemas/custom-model-catalog.schema.json");
   assert.deepEqual(schema.required, ["version", "models"]);
 
   for (const example of examples) {

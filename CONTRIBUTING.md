@@ -60,8 +60,8 @@ Good issue reports usually include:
 The recommended local setup is:
 
 ```bash
-git clone https://github.com/rabesss/codex-desktop-linux.git
-cd codex-desktop-linux
+git clone https://github.com/rabesss/codex-linux.git
+cd codex-linux
 bash scripts/install-deps.sh
 ```
 

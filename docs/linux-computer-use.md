@@ -93,7 +93,7 @@ To opt back out, unset the env var and remove the settings flag or set it to
 Nix:
 
 ```bash
-nix run github:rabesss/codex-desktop-linux#codex-desktop-computer-use-ui
+nix run github:rabesss/codex-linux#codex-desktop-computer-use-ui
 ```
 
 ## Side-By-Side Dev Variant

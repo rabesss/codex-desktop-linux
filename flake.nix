@@ -562,7 +562,7 @@ PY
                 "Codex Desktop for Linux"
               else
                 "Codex Desktop for Linux with ${pkgs.lib.concatStringsSep ", " featureIds} enabled";
-            homepage = "https://github.com/rabesss/codex-desktop-linux";
+            homepage = "https://github.com/rabesss/codex-linux";
             license = pkgs.lib.licenses.mit;
             platforms = pkgs.lib.platforms.linux;
             mainProgram = "codex-desktop";

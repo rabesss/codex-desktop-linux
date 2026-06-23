@@ -81,7 +81,7 @@ custom catalog JSON or optional codex-shim /api/models
   -> configured provider endpoint
 ```
 
-[`rabesss/codex-desktop-linux`](https://github.com/rabesss/codex-desktop-linux)
+[`rabesss/codex-linux`](https://github.com/rabesss/codex-linux)
 owns the Desktop bundle patches. Its `custom-model-catalog` feature merges the
 custom catalog and preserves the selected custom model, provider, session
 config, and dynamic tools across thread start, fork, and resume.

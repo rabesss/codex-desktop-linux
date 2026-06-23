@@ -13,8 +13,8 @@ flows download or consume the upstream app locally.
 For most users, the install is:
 
 ```bash
-git clone https://github.com/rabesss/codex-desktop-linux.git
-cd codex-desktop-linux
+git clone https://github.com/rabesss/codex-linux.git
+cd codex-linux
 make install-guided
 ```
 
@@ -316,7 +316,7 @@ Custom-model support is split deliberately across two public repositories:
 
 | Repository | Responsibility |
 |---|---|
-| [`rabesss/codex-desktop-linux`](https://github.com/rabesss/codex-desktop-linux) | Builds and packages Desktop, adds the custom-model picker, preserves provider identity across start/fork/resume, and exposes Linux Browser tooling. |
+| [`rabesss/codex-linux`](https://github.com/rabesss/codex-linux) | Builds and packages Desktop, adds the custom-model picker, preserves provider identity across start/fork/resume, and exposes Linux Browser tooling. |
 | [`rabesss/codex-shim`](https://github.com/rabesss/codex-shim) | Optional adapter that serves a loopback model catalog and translates Codex Responses requests, streaming events, tool calls, and compaction to CLIProxyAPI-backed providers. |
 
 Neither repository should absorb the other's job. Desktop must keep official

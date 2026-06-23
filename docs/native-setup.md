@@ -9,8 +9,8 @@ This project has two native install entrypoints:
 ## Guided Install
 
 ```bash
-git clone https://github.com/rabesss/codex-desktop-linux.git
-cd codex-desktop-linux
+git clone https://github.com/rabesss/codex-linux.git
+cd codex-linux
 make install-guided
 ```
 
@@ -27,8 +27,8 @@ must be rejected before the app advances or writes Codex auth state.
 ## Fast Native Install
 
 ```bash
-git clone https://github.com/rabesss/codex-desktop-linux.git
-cd codex-desktop-linux
+git clone https://github.com/rabesss/codex-linux.git
+cd codex-linux
 make bootstrap-native
 ```
 

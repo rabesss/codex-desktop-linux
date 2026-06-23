@@ -3,7 +3,7 @@
 Run Codex Desktop for Linux directly with:
 
 ```bash
-nix run github:rabesss/codex-desktop-linux
+nix run github:rabesss/codex-linux
 ```
 
 The flake handles dependencies and patches Electron for NixOS. A GitHub Actions
@@ -124,7 +124,7 @@ Flakes do not include the git-ignored `linux-features/features.json` opt-in
 file. The maintained Nix variant only exposes the Computer Use UI build:
 
 ```bash
-nix run github:rabesss/codex-desktop-linux#codex-desktop-computer-use-ui
+nix run github:rabesss/codex-linux#codex-desktop-computer-use-ui
 ```
 
 ## Home Manager / NixOS Module
@@ -134,7 +134,7 @@ For a declarative install:
 ```nix
 {
   imports = [
-    inputs.codex-desktop-linux.homeManagerModules.default
+    inputs.codex-linux.homeManagerModules.default
   ];
 
   programs.codexDesktopLinux = {
@@ -157,7 +157,7 @@ configurations that prefer a global user unit.
 ## Development Shell
 
 ```bash
-nix develop github:rabesss/codex-desktop-linux
+nix develop github:rabesss/codex-linux
 ```
 
 ## Cachix
