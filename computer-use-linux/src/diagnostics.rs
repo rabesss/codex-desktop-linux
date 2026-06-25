@@ -1,6 +1,6 @@
 use crate::windowing::registry::{
     self, COSMIC_WAYLAND_BACKEND, GNOME_SHELL_EXTENSION_BACKEND, GNOME_SHELL_INTROSPECT_BACKEND,
-    HYPRLAND_BACKEND, KWIN_BACKEND,
+    HYPRLAND_BACKEND, I3_BACKEND, KWIN_BACKEND, SWAY_BACKEND,
 };
 use schemars::JsonSchema;
 use serde::Serialize;
@@ -21,8 +21,10 @@ const DESKTOP_ENV_KEYS: &[&str] = &[
     "DESKTOP_SESSION",
     "DISPLAY",
     "HYPRLAND_INSTANCE_SIGNATURE",
+    "I3SOCK",
     "XAUTHORITY",
     "YDOTOOL_SOCKET",
+    "SWAYSOCK",
     "XDG_SESSION_DESKTOP",
     "WAYLAND_DISPLAY",
     "XDG_CURRENT_DESKTOP",
@@ -107,7 +109,9 @@ pub struct WindowingReport {
     pub codex_gnome_shell_extension: Check,
     pub cosmic_helper: Check,
     pub kwin: Check,
+    pub sway: Check,
     pub hyprland: Check,
+    pub i3: Check,
     pub backends: BTreeMap<String, Check>,
     pub can_list_windows: bool,
     pub can_focus_apps: bool,
@@ -229,11 +233,17 @@ fn capability_map(
     if windowing.kwin.ok {
         window_backends.push("kwin".to_string());
     }
+    if windowing.sway.ok {
+        window_backends.push("sway".to_string());
+    }
     if windowing.hyprland.ok {
         window_backends.push("hyprland".to_string());
     }
     if windowing.cosmic_helper.ok {
         window_backends.push("cosmic".to_string());
+    }
+    if windowing.i3.ok {
+        window_backends.push("i3".to_string());
     }
 
     let mut accessibility_backends = Vec::new();
@@ -563,7 +573,9 @@ fn windowing_report(platform: &PlatformReport) -> WindowingReport {
     let codex_gnome_shell_extension = backend_check(GNOME_SHELL_EXTENSION_BACKEND);
     let cosmic_helper = backend_check(COSMIC_WAYLAND_BACKEND);
     let kwin = backend_check(KWIN_BACKEND);
+    let sway = backend_check(SWAY_BACKEND);
     let hyprland = backend_check(HYPRLAND_BACKEND);
+    let i3 = backend_check(I3_BACKEND);
     let backends = probes
         .iter()
         .map(|probe| (probe.id.to_string(), check_from_backend_probe(probe)))
@@ -576,13 +588,17 @@ fn windowing_report(platform: &PlatformReport) -> WindowingReport {
             "A COSMIC Wayland window backend is available for list_windows, focused_window, and targeted input verification."
         } else if kwin.ok {
             "A KWin/Plasma window backend is available for list_windows, focused_window, and targeted input verification."
+        } else if sway.ok {
+            "A Sway IPC window backend is available for list_windows, focused_window, and targeted input verification."
         } else if hyprland.ok {
             "A Hyprland window backend is available for list_windows, focused_window, and targeted input verification."
+        } else if i3.ok {
+            "An i3/X11 window backend is available for list_windows, focused_window, and targeted input verification."
         } else {
             "A GNOME window listing backend is available for list_windows, focused_window, and targeted input verification."
         }
     } else {
-        "Window listing is unavailable or denied. Computer Use can still use screenshots, AT-SPI, and global ydotool input, but targeted window input cannot be verified. On GNOME, run setup_window_targeting to install the optional GNOME Shell extension backend. On COSMIC, ensure the bundled COSMIC helper is present and can connect to the session. On KDE/Plasma, ensure KWin exposes org.kde.KWin scripting on the session bus. On Hyprland, ensure hyprctl is available in the session."
+        "Window listing is unavailable or denied. Computer Use can still use screenshots, AT-SPI, and global ydotool input, but targeted window input cannot be verified. On GNOME, run setup_window_targeting to install the optional GNOME Shell extension backend. On KDE/Plasma, ensure KWin exposes org.kde.KWin scripting on the session bus. On Sway, ensure swaymsg can reach SWAYSOCK or a Sway IPC socket. On Hyprland, ensure hyprctl is available in the session. On COSMIC, ensure the bundled COSMIC helper is present and can connect to the session. On i3/X11, ensure i3-msg can reach the active i3 IPC socket."
     }
     .to_string();
 
@@ -591,7 +607,9 @@ fn windowing_report(platform: &PlatformReport) -> WindowingReport {
         codex_gnome_shell_extension,
         cosmic_helper,
         kwin,
+        sway,
         hyprland,
+        i3,
         backends,
         can_list_windows,
         can_focus_apps,
@@ -1010,7 +1028,9 @@ mod tests {
             },
             cosmic_helper: Check::fail("missing"),
             kwin: Check::fail("not a KWin session"),
+            sway: Check::fail("not a Sway session"),
             hyprland: Check::fail("not a Hyprland session"),
+            i3: Check::fail("not an i3 session"),
             backends: BTreeMap::new(),
             can_list_windows,
             can_focus_apps: true,

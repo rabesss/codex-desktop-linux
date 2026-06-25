@@ -1,4 +1,4 @@
-use crate::windowing::backends::{cosmic, gnome, hyprland, i3, kwin};
+use crate::windowing::backends::{cosmic, gnome, hyprland, i3, kwin, sway};
 use crate::windowing::types::WindowInfo;
 use anyhow::{anyhow, Result};
 
@@ -7,8 +7,9 @@ pub use gnome::{GNOME_SHELL_EXTENSION_BACKEND, GNOME_SHELL_INTROSPECT_BACKEND};
 pub use hyprland::HYPRLAND_BACKEND;
 pub use i3::I3_BACKEND;
 pub use kwin::KWIN_BACKEND;
+pub use sway::SWAY_BACKEND;
 
-pub const WINDOW_PERMISSION_HINT: &str = "Computer Use could not access a supported window list backend. Targeted window input requires session-bus access plus GNOME Shell Introspect, the Codex GNOME Shell extension, the COSMIC Wayland helper, KWin/Plasma DBus scripting, Hyprland hyprctl, or i3-msg. On GNOME, run setup_window_targeting to install the extension backend.";
+pub const WINDOW_PERMISSION_HINT: &str = "Computer Use could not access a supported window list backend. Targeted window input requires session-bus access plus GNOME Shell Introspect, the Codex GNOME Shell extension, KWin/Plasma DBus scripting, Sway IPC via swaymsg, Hyprland hyprctl, the COSMIC Wayland helper, or i3-msg. On GNOME, run setup_window_targeting to install the extension backend.";
 
 #[derive(Debug, Clone, Copy)]
 pub struct BackendDescriptor {
@@ -35,6 +36,7 @@ enum BackendKind {
     GnomeIntrospect,
     Cosmic,
     Kwin,
+    Sway,
     Hyprland,
     I3,
 }
@@ -42,9 +44,10 @@ enum BackendKind {
 const BACKEND_ORDER: &[BackendKind] = &[
     BackendKind::GnomeExtension,
     BackendKind::GnomeIntrospect,
-    BackendKind::Cosmic,
     BackendKind::Kwin,
+    BackendKind::Sway,
     BackendKind::Hyprland,
+    BackendKind::Cosmic,
     BackendKind::I3,
 ];
 
@@ -64,13 +67,6 @@ const DESCRIPTORS: &[BackendDescriptor] = &[
         can_exact_focus: false,
     },
     BackendDescriptor {
-        id: COSMIC_WAYLAND_BACKEND,
-        failure_label: "COSMIC helper",
-        list_note: "Window list came from the COSMIC Wayland helper. Terminal windows may include best-effort PTY and active-process context when the process tree is readable.",
-        missing_hint: "On COSMIC, ensure the bundled COSMIC helper is present and can connect to the session.",
-        can_exact_focus: true,
-    },
-    BackendDescriptor {
         id: KWIN_BACKEND,
         failure_label: "KWin",
         list_note: "Window list came from KWin/Plasma DBus scripting. Terminal windows may include best-effort PTY and active-process context when the process tree is readable.",
@@ -78,10 +74,24 @@ const DESCRIPTORS: &[BackendDescriptor] = &[
         can_exact_focus: true,
     },
     BackendDescriptor {
+        id: SWAY_BACKEND,
+        failure_label: "Sway",
+        list_note: "Window list came from Sway IPC through swaymsg. Terminal windows may include best-effort PTY and active-process context when the process tree is readable.",
+        missing_hint: "On Sway or Sway-compatible IPC sessions, ensure swaymsg can reach SWAYSOCK or a Sway IPC socket.",
+        can_exact_focus: true,
+    },
+    BackendDescriptor {
         id: HYPRLAND_BACKEND,
         failure_label: "Hyprland",
         list_note: "Window list came from Hyprland hyprctl. Terminal windows may include best-effort PTY and active-process context when the process tree is readable.",
         missing_hint: "On Hyprland, ensure hyprctl is available in the session.",
+        can_exact_focus: true,
+    },
+    BackendDescriptor {
+        id: COSMIC_WAYLAND_BACKEND,
+        failure_label: "COSMIC helper",
+        list_note: "Window list came from the COSMIC Wayland helper. Terminal windows may include best-effort PTY and active-process context when the process tree is readable.",
+        missing_hint: "On COSMIC, ensure the bundled COSMIC helper is present and can connect to the session.",
         can_exact_focus: true,
     },
     BackendDescriptor {
@@ -151,6 +161,7 @@ async fn list_windows_for(backend: BackendKind) -> Result<Vec<WindowInfo>> {
         BackendKind::GnomeIntrospect => gnome::list_introspect_windows().await,
         BackendKind::Cosmic => cosmic::list_windows(),
         BackendKind::Kwin => kwin::list_windows().await,
+        BackendKind::Sway => sway::list_windows(),
         BackendKind::Hyprland => hyprland::list_windows(),
         BackendKind::I3 => i3::list_windows(),
     }
@@ -174,6 +185,7 @@ pub async fn activate_window(window: &WindowInfo) -> Result<()> {
         }
         COSMIC_WAYLAND_BACKEND => cosmic::activate_window(window.window_id),
         KWIN_BACKEND => kwin::activate_window(window.window_id).await,
+        SWAY_BACKEND => sway::activate_window(window.window_id),
         HYPRLAND_BACKEND => hyprland::activate_window(window.window_id),
         I3_BACKEND => i3::activate_window(window.window_id),
         backend => Err(anyhow!(
@@ -193,9 +205,10 @@ pub fn probe_backends() -> Vec<BackendProbe> {
     vec![
         gnome::probe_extension(),
         gnome::probe_introspect(),
-        cosmic::probe(),
         kwin::probe(),
+        sway::probe(),
         hyprland::probe(),
+        cosmic::probe(),
         i3::probe(),
     ]
 }
@@ -207,6 +220,7 @@ impl BackendKind {
             BackendKind::GnomeIntrospect => GNOME_SHELL_INTROSPECT_BACKEND,
             BackendKind::Cosmic => COSMIC_WAYLAND_BACKEND,
             BackendKind::Kwin => KWIN_BACKEND,
+            BackendKind::Sway => SWAY_BACKEND,
             BackendKind::Hyprland => HYPRLAND_BACKEND,
             BackendKind::I3 => I3_BACKEND,
         }

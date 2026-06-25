@@ -9,7 +9,8 @@ It supports:
 - app listing and accessibility trees through AT-SPI
 - screenshots through GNOME Shell DBus, XDG Desktop Portal, or Hyprland `grim`
   region capture for verified targeted windows
-- window listing and focusing on GNOME, KWin/Plasma, Hyprland, COSMIC, and i3
+- window listing and focusing on GNOME, KWin/Plasma, Sway IPC, Hyprland,
+  COSMIC, and i3
 - keyboard, text, click, scroll, and drag input through `/dev/uinput`, XDG
   RemoteDesktop portal, or `ydotool`
 
@@ -72,6 +73,40 @@ sudo pacman -S grim
 # openSUSE
 sudo zypper install grim
 ```
+
+Sway targeting uses `swaymsg` and the Sway IPC socket. `swaymsg` normally
+discovers the socket from `SWAYSOCK`, with `I3SOCK` as Sway's i3-compatible
+fallback. The backend only passes vetted Sway sockets to `swaymsg`; when the app
+process inherited an unrelated i3 socket, it is cleared so Sway detection fails
+closed instead of misclassifying i3 as Sway. When `SWAYSOCK` is absent from the
+app process, the backend also checks `sway --get-socketpath` in Sway sessions
+and recent `$XDG_RUNTIME_DIR/sway-ipc.*.sock` sockets.
+
+```bash
+# Debian / Ubuntu
+sudo apt install sway
+
+# Fedora
+sudo dnf install sway
+
+# Arch / Manjaro
+sudo pacman -S sway
+
+# openSUSE
+sudo zypper install sway
+```
+
+## Backend Matrix
+
+| Desktop/compositor | Window list | Exact focus | Targeted screenshot path | Notes |
+| --- | --- | --- | --- | --- |
+| GNOME Shell extension | yes | yes | full screenshot, then verified crop | Run `setup_window_targeting` when GNOME Introspect cannot focus exact windows. |
+| GNOME Shell Introspect | yes | app only | full screenshot, then crop only for app-level targets | Exact `window_id`, `title`, and terminal targets fail closed without the extension. |
+| KDE/Plasma KWin | yes | yes | full screenshot, then verified crop | Uses temporary KWin DBus scripting and unloads the script after each query. |
+| Sway IPC | yes | yes | full screenshot, then verified crop | Uses `swaymsg -t get_tree` and focuses by `con_id`; generic wlroots compositors need their own backend unless they expose Sway-compatible IPC. |
+| Hyprland | yes | yes | `grim -g` region capture for verified target windows | Uses `hyprctl` and exact focused-window address verification. |
+| COSMIC | yes | yes | full screenshot, then verified crop | Uses the bundled COSMIC Wayland helper. |
+| i3/X11 | yes | yes | full screenshot, then verified crop | Uses `i3-msg` IPC and `xprop` for best-effort PID hydration. |
 
 ## Targeted Window Safety
 

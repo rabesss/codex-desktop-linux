@@ -6,7 +6,7 @@ pub mod types;
 #[allow(unused_imports)]
 pub use registry::{
     COSMIC_WAYLAND_BACKEND, GNOME_SHELL_EXTENSION_BACKEND, GNOME_SHELL_INTROSPECT_BACKEND,
-    HYPRLAND_BACKEND, I3_BACKEND, KWIN_BACKEND, WINDOW_PERMISSION_HINT,
+    HYPRLAND_BACKEND, I3_BACKEND, KWIN_BACKEND, SWAY_BACKEND, WINDOW_PERMISSION_HINT,
 };
 #[allow(unused_imports)]
 pub use target::{
@@ -24,6 +24,7 @@ mod tests {
     use super::backends::kwin::{
         kwin_activate_script_source, kwin_window_id_from_uuid, parse_kwin_windows, KWIN_BACKEND,
     };
+    use super::backends::sway::{parse_sway_tree, SWAY_BACKEND};
     use super::registry::{
         descriptors, list_note, COSMIC_WAYLAND_BACKEND, GNOME_SHELL_EXTENSION_BACKEND,
         GNOME_SHELL_INTROSPECT_BACKEND,
@@ -51,9 +52,10 @@ mod tests {
             vec![
                 GNOME_SHELL_EXTENSION_BACKEND,
                 GNOME_SHELL_INTROSPECT_BACKEND,
-                COSMIC_WAYLAND_BACKEND,
                 KWIN_BACKEND,
+                SWAY_BACKEND,
                 HYPRLAND_BACKEND,
+                COSMIC_WAYLAND_BACKEND,
                 I3_BACKEND,
             ]
         );
@@ -227,6 +229,21 @@ mod tests {
     fn i3_backend_can_exact_focus_targets() {
         let mut window = window(2, "Codex", "codex-desktop", "codex-desktop");
         window.backend = I3_BACKEND.to_string();
+
+        ensure_backend_can_focus_target(
+            &WindowTarget {
+                title: Some("Codex".to_string()),
+                ..Default::default()
+            },
+            &window,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn sway_backend_can_exact_focus_targets() {
+        let mut window = window(2, "Codex", "codex-desktop", "codex-desktop");
+        window.backend = SWAY_BACKEND.to_string();
 
         ensure_backend_can_focus_target(
             &WindowTarget {
@@ -631,6 +648,95 @@ mod tests {
         assert_eq!(windows[0].bounds.as_ref().unwrap().x, Some(0));
         assert_eq!(windows[1].title.as_deref(), Some("Save File"));
         assert_eq!(windows[1].bounds.as_ref().unwrap().width, 600);
+    }
+
+    #[test]
+    fn parses_sway_tree_as_window_info() {
+        let tree_json = r#"{
+          "type": "root",
+          "focused": false,
+          "nodes": [
+            {
+              "type": "output",
+              "nodes": [
+                {
+                  "type": "workspace",
+                  "num": 3,
+                  "focused": true,
+                  "nodes": [
+                    {
+                      "id": 42,
+                      "type": "con",
+                      "focused": true,
+                      "name": "Codex",
+                      "app_id": "codex-desktop",
+                      "pid": 8123,
+                      "rect": {"x": 20, "y": 40, "width": 1200, "height": 900},
+                      "visible": true,
+                      "shell": "xdg_shell",
+                      "foreign_toplevel_identifier": "sway-window-42"
+                    },
+                    {
+                      "id": 43,
+                      "type": "con",
+                      "focused": false,
+                      "window": 65011713,
+                      "name": "Browser",
+                      "pid": 8124,
+                      "rect": {"x": 1220, "y": 40, "width": 900, "height": 900},
+                      "shell": "xwayland",
+                      "window_properties": {
+                        "class": "Brave-browser",
+                        "instance": "brave-browser",
+                        "title": "Browser"
+                      }
+                    },
+                    {
+                      "id": 44,
+                      "type": "con",
+                      "name": "Split container",
+                      "rect": {"x": 0, "y": 0, "width": 1, "height": 1}
+                    }
+                  ],
+                  "floating_nodes": [
+                    {
+                      "id": 45,
+                      "type": "floating_con",
+                      "focused": false,
+                      "name": "Dialog",
+                      "app_id": "org.example.Dialog",
+                      "pid": 8125,
+                      "geometry": {"x": 200, "y": 160, "width": 500, "height": 300},
+                      "visible": false,
+                      "shell": "xdg_shell"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }"#;
+
+        let windows = parse_sway_tree(tree_json).unwrap();
+
+        assert_eq!(windows.len(), 3);
+        assert_eq!(windows[0].window_id, 42);
+        assert_eq!(
+            windows[0].backend_window_id.as_deref(),
+            Some("sway-window-42")
+        );
+        assert_eq!(windows[0].title.as_deref(), Some("Codex"));
+        assert_eq!(windows[0].app_id.as_deref(), Some("codex-desktop"));
+        assert_eq!(windows[0].pid, Some(8123));
+        assert_eq!(windows[0].bounds.as_ref().unwrap().x, Some(20));
+        assert_eq!(windows[0].workspace, Some(3));
+        assert!(windows[0].focused);
+        assert_eq!(windows[0].client_type.as_deref(), Some("wayland"));
+        assert_eq!(windows[0].backend, SWAY_BACKEND);
+        assert_eq!(windows[1].app_id.as_deref(), Some("brave-browser"));
+        assert_eq!(windows[1].wm_class.as_deref(), Some("Brave-browser"));
+        assert_eq!(windows[1].client_type.as_deref(), Some("x11"));
+        assert!(windows[2].hidden);
     }
 
     #[test]

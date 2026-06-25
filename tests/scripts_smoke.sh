@@ -1693,8 +1693,8 @@ SCRIPT
     assert_not_contains "$output_log" "unexpected stat output"
 }
 
-test_setup_native_wizard_sway_hint_is_conservative() {
-    info "Checking setup-native wizard Sway backend hint stays conservative"
+test_setup_native_wizard_sway_hint_mentions_sway_ipc() {
+    info "Checking setup-native wizard Sway backend hint mentions Sway IPC"
     local workspace="$TMP_DIR/setup-native-sway-hint"
     local features_root="$workspace/linux-features"
     local config="$workspace/features.json"
@@ -1711,8 +1711,8 @@ test_setup_native_wizard_sway_hint_is_conservative() {
     CODEX_LINUX_FEATURES_CONFIG="$config" \
         bash "$REPO_DIR/scripts/bootstrap-wizard.sh" >"$output_log"
 
-    assert_contains "$output_log" "Sway -> not explicitly supported by the current i3 backend"
-    assert_not_contains "$output_log" "Sway -> i3 IPC backend through swaymsg"
+    assert_contains "$output_log" "Sway -> swaymsg IPC backend"
+    assert_not_contains "$output_log" "not explicitly supported by the current i3 backend"
 }
 
 test_upstream_build_app_workflow_tracks_dmg_metadata() {
@@ -5649,7 +5649,7 @@ main() {
     test_setup_native_wizard_dry_runs_deps_and_install_native
     test_setup_native_wizard_prints_deep_readiness_guidance
     test_setup_native_wizard_uinput_stat_is_bounded
-    test_setup_native_wizard_sway_hint_is_conservative
+    test_setup_native_wizard_sway_hint_mentions_sway_ipc
     test_upstream_build_app_workflow_tracks_dmg_metadata
     test_installer_detects_electron_version_from_plist
     test_installer_keeps_electron_fallback_for_bad_metadata
