@@ -715,6 +715,7 @@ stage_update_builder_bundle() {
     local update_builder_root="$root/opt/$PACKAGE_NAME/update-builder"
     local node_runtime_source="$APP_DIR/resources/node-runtime"
 
+    rm -rf "$update_builder_root"
     mkdir -p \
         "$update_builder_root/scripts" \
         "$update_builder_root/scripts/lib" \
@@ -722,10 +723,14 @@ stage_update_builder_bundle() {
         "$update_builder_root/launcher" \
         "$update_builder_root/linux-features" \
         "$update_builder_root/packaging/linux" \
+        "$update_builder_root/release" \
         "$update_builder_root/assets"
 
     cp "$REPO_DIR/install.sh" "$update_builder_root/install.sh"
     cp "$REPO_DIR/CHANGELOG.md" "$update_builder_root/CHANGELOG.md"
+    if [ -d "$REPO_DIR/release" ]; then
+        cp -a "$REPO_DIR/release/." "$update_builder_root/release/"
+    fi
     cp "$REPO_DIR/launcher/start.sh.template" "$update_builder_root/launcher/start.sh.template"
     cp "$REPO_DIR/launcher/webview-server.py" "$update_builder_root/launcher/webview-server.py"
     cp "$REPO_DIR/Cargo.toml" "$update_builder_root/Cargo.toml"

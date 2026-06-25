@@ -96,6 +96,7 @@ jobs:
           grep -q './usr/bin/codex-update-manager' /tmp/deb-contents.txt
           grep -q './usr/lib/systemd/user/codex-update-manager.service' /tmp/deb-contents.txt
           grep -q './opt/codex-desktop/update-builder/install.sh' /tmp/deb-contents.txt
+          grep -q './opt/codex-desktop/update-builder/release/upstream-dmg-lock.json' /tmp/deb-contents.txt
           grep -q './opt/codex-desktop/.codex-linux/codex-packaged-runtime.sh' /tmp/deb-contents.txt
           {
             echo "## Debian Package Validation"
@@ -264,6 +265,7 @@ jobs:
           grep -q '/usr/bin/codex-update-manager' /tmp/rpm-contents.txt
           grep -q '/usr/lib/systemd/user/codex-update-manager.service' /tmp/rpm-contents.txt
           grep -q '/opt/codex-desktop/update-builder/install.sh' /tmp/rpm-contents.txt
+          grep -q '/opt/codex-desktop/update-builder/release/upstream-dmg-lock.json' /tmp/rpm-contents.txt
           grep -q '/opt/codex-desktop/.codex-linux/codex-packaged-runtime.sh' /tmp/rpm-contents.txt
           {
             echo "## RPM Package Validation"
@@ -307,6 +309,7 @@ jobs:
                 grep -q "usr/bin/codex-update-manager" /tmp/pacman-contents.txt
                 grep -q "usr/lib/systemd/user/codex-update-manager.service" /tmp/pacman-contents.txt
                 grep -q "opt/codex-desktop/update-builder/install.sh" /tmp/pacman-contents.txt
+                grep -q "opt/codex-desktop/update-builder/release/upstream-dmg-lock.json" /tmp/pacman-contents.txt
                 grep -q "opt/codex-desktop/.codex-linux/codex-packaged-runtime.sh" /tmp/pacman-contents.txt
                 printf "%s\n" "$(basename "$pkg_file")" > /tmp/pacman-package-name.txt
               '"'"'

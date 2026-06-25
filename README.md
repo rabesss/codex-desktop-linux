@@ -1,16 +1,22 @@
 # Codex Desktop Linux
 
-Codex Desktop Linux is a maintained Linux installer and compatibility layer
-for OpenAI Codex Desktop. It downloads the official upstream Codex Desktop app
-on your machine, converts it into a Linux Electron app, adds Linux desktop
-integration, and builds a native package for your distribution.
+Codex Desktop Linux is an unofficial Linux wrapper for OpenAI Codex Desktop.
+It is heavily inspired by
+[`ilysenko/codex-desktop-linux`](https://github.com/ilysenko/codex-desktop-linux):
+that project established the practical local-conversion model for turning the
+official Codex Desktop app into Linux packages. This fork keeps that local
+conversion approach and adds a governed two-channel update model, stricter
+release boundaries, optional custom-model routing, and package-focused Linux
+maintenance.
 
-The project does not redistribute OpenAI application binaries. Build and update
-flows download or consume the upstream app locally.
+The project does not redistribute OpenAI application binaries. The upstream
+Codex Desktop DMG is downloaded or provided by the user during local build and
+update flows. Public CI and release automation should publish metadata, hashes,
+patch reports, logs, and review records only.
 
 ## Quick Start
 
-For most users, the install is:
+For most users:
 
 ```bash
 git clone https://github.com/rabesss/codex-linux.git
@@ -18,359 +24,151 @@ cd codex-linux
 make install-guided
 ```
 
-What happens:
+The guided installer checks host dependencies, downloads the official upstream
+Codex Desktop app locally, applies the Linux wrapper patches, builds a native
+package for the current distribution, and installs it with explicit system
+authorization.
 
-1. The setup wizard checks your system, explains what will be installed, and
-   lets you pick optional Linux features.
-2. It installs required build tools, downloads the official Codex Desktop app,
-   builds a Linux package, and installs it.
-
-After the install, launch Codex Desktop from your app launcher or run:
+Launch the installed app from the desktop menu or run:
 
 ```bash
 codex-desktop
 ```
 
-Check that the installed app is ready:
+Check installed readiness:
 
 ```bash
 codex-desktop-doctor
+codex-desktop-doctor --json
 ```
 
-### Before You Start
+## What This Fork Adds
 
-You need:
+This repository is not a binary mirror of Codex Desktop and is not a blind
+"latest DMG" updater. It keeps two update streams separate:
 
-- a Linux desktop session;
-- `git`;
-- internet access for downloading the upstream app and build dependencies;
-- a user account that can authorize package installation with `sudo` or
-  `pkexec`;
-- enough disk space for a downloaded app, extracted build tree, native modules,
-  and package artifact. A few gigabytes free is a practical minimum.
+| Channel | Owns | Default user effect |
+|---|---|---|
+| Upstream Codex app channel | Official OpenAI DMG URL, version metadata, SHA256, size, HTTP metadata, patch-validation status, approved pins | Users receive only approved upstream app pins by default. Newer live DMGs are candidates until validated and promoted. |
+| Linux wrapper channel | Installer, patch descriptors, updater code, Linux feature framework, package builders, launcher, bundled Linux integration, docs | Wrapper changes can update the local rebuild machinery independently from an upstream app pin. |
 
-Supported package flows are Debian/Ubuntu `.deb`, Fedora/openSUSE `.rpm`, Arch
-`.pkg.tar.zst`, and AppImage. The native package path is preferred because it
-installs the launcher, icon, MIME handlers, updater service, and system
-integration.
+One updater UX can report both channels, but provenance, validation state,
+rollback, and promotion are intentionally separate.
 
-`make bootstrap-native` installs dependencies automatically on supported
-distributions. For a manual Fedora setup, use the command matching the release:
+## How Updates Work
+
+Native packages include `codex-update-manager`, a user service and CLI that can
+rebuild a Linux package from an approved upstream app pin.
+
+The governed flow is:
+
+1. CI or a maintainer detects upstream DMG metadata.
+2. The candidate DMG is downloaded only inside the validation environment.
+3. The Linux patch set is applied and a patch report is produced.
+4. CI stores metadata and reports, not the DMG, extracted app, or rebuilt app
+   payload.
+5. A maintainer performs local dogfood and review.
+6. A promoted approval record pins the upstream app version, URL, SHA256, size,
+   validation evidence, and minimum wrapper revision.
+7. End-user update checks consume the approved record by default.
+
+If OpenAI publishes a newer DMG before it is approved, the updater may report
+that a candidate exists, but it should not replace the installed app from that
+unapproved candidate in the default path.
+
+## Approved Upstream App Pins
+
+An approved upstream app pin is the release contract for the OpenAI app
+payload. It should contain only portable metadata:
+
+- upstream app version;
+- official DMG URL;
+- SHA256 and size;
+- ETag and `Last-Modified` when available;
+- approval timestamp and reviewer/process marker;
+- minimum Linux wrapper revision required to rebuild safely;
+- links or paths to metadata-only patch reports.
+
+The approval record must not contain local filesystem paths, debug payload
+captures, secrets, extracted app files, DMG payloads, or native packages
+containing OpenAI application code.
+
+## Wrapper Updates
+
+The Linux wrapper channel covers this repository's own code and package
+machinery: `install.sh`, patch descriptors, `linux-features/`, the updater,
+package builders, launcher templates, bundled Linux integration, and docs.
+
+Wrapper updates matter because a future upstream DMG may require newer patch or
+builder logic before it can be safely consumed. A governed updater should either
+apply the required wrapper machinery first or block with a clear message instead
+of attempting a rebuild with stale patch code.
+
+Packaged installs are frozen copies, not live Git checkouts. Runtime wrapper
+checks therefore rely on installed build metadata or package upgrades; they
+should not assume that `/opt/codex-desktop/update-builder` has a `.git`
+directory.
+
+## Build And Package Flow
+
+The normal local build flow is:
+
+```text
+official Codex.dmg
+  -> local extraction
+  -> Linux patch descriptors and enabled features
+  -> Linux Electron runtime and rebuilt native modules
+  -> codex-app/
+  -> native package or AppImage
+```
+
+Supported package flows include Debian/Ubuntu `.deb`, Fedora/openSUSE `.rpm`,
+Arch-family `.pkg.tar.zst`, and local AppImage self-builds. Native packages are
+preferred because they install the launcher, desktop entry, icon, MIME/URL
+integration, Polkit policy, updater service, and packaged update builder.
+
+Common distribution dependency commands:
 
 ```bash
-# Fedora 41+ (dnf5)
+# Fedora 41+
 sudo dnf install python3 7zip curl unzip rpm-build @development-tools
 
-# Older Fedora releases
+# Fedora < 41
 sudo dnf install python3 p7zip p7zip-plugins curl unzip rpm-build
-sudo dnf groupinstall 'Development Tools'
 ```
 
-## Which Command Should I Run?
+Common commands:
 
 | Situation | Command |
 |---|---|
-| First install, simplest path | `make install-guided` |
-| Non-interactive first install with defaults | `make bootstrap-native` |
+| Guided first install | `make install-guided` |
+| Non-interactive native install | `make bootstrap-native` |
 | Dependencies are already installed | `make install-native` |
-| Install the packaged custom-model Desktop stack | `make install-custom-models` |
-| Build a native package with custom-model support but do not install it | `make package-custom-models` |
-| Build the app but do not install a system package | `make build-app-fresh` then `make run-app` |
+| Build without installing | `make build-app-fresh` |
+| Build and install a native package | `make package && make install` |
 | Build a specific package format | `make deb`, `make rpm`, `make pacman`, or `make appimage` |
-| Use a downloaded local upstream DMG | `make build-app DMG=/path/to/Codex.dmg` |
-| See installed readiness later | `codex-desktop-doctor` or `codex-desktop-doctor --json` |
+| Build from a local DMG | `make build-app DMG=/path/to/Codex.dmg` |
+| Build the public custom-model profile | `make package-custom-models` |
 
-If graphical package authorization is unavailable, the updater opens a terminal
-for the same system authorization step. It does not store or forward your
-password.
+The package scripts repackage `codex-app/`; they do not download or extract the
+DMG themselves.
 
-## What Gets Installed?
+## Optional Linux Features
 
-Native packages install:
+Core Linux compatibility is part of the base build. Optional features live
+under `linux-features/` and are disabled unless selected before building.
 
-- the converted Codex Desktop app under the system app directory;
-- a `codex-desktop` launcher;
-- a desktop entry, icon, and URL/MIME integration;
-- a managed Node.js runtime used by bundled browser tooling;
-- the official bundled Browser, Chrome, and Computer Use plugin payloads patched
-  for Linux;
-- `codex-update-manager`, a user service that can rebuild future updates from
-  newer upstream app downloads.
+Public examples include:
 
-The installed app is still Codex Desktop. This repository only supplies the
-Linux packaging and compatibility layer around the official app payload.
-
-## Optional Features In Plain English
-
-You do not have to enable optional features for a normal first install. Start
-with the defaults unless you know you need one of these.
-
-| Feature | Use it when |
-|---|---|
-| `open-target-discovery` | You want Codex to discover local file managers, terminals, and editor launch targets from Linux desktop entries. |
-| `codex-wrapper-updater` | You want update controls for this Linux wrapper inside the app. |
-| `brave-origin-browser-control` | You want Codex browser control to target Brave Origin Nightly instead of the default supported Chromium-family targets. |
-| `custom-model-catalog` | You want provider-aware custom rows in the Desktop model picker from a local catalog. |
-
-The setup wizard can write the feature config for you. Advanced users can also
-create `linux-features/features.json` manually:
-
-```json
-{
-  "enabled": [
-    "open-target-discovery",
-    "custom-model-catalog"
-  ]
-}
-```
-
-Then rebuild with:
-
-```bash
-make install-native
-```
-
-## Updating Later
-
-Native packages include a Linux update manager for Debian/Ubuntu, Fedora/
-openSUSE, and Arch-family systems. When OpenAI publishes a newer macOS DMG, it:
-
-1. downloads the official DMG locally;
-2. rebuilds the matching Linux package with your enabled features;
-3. waits for Codex Desktop to close;
-4. asks for system package-install authorization; and
-5. installs the package and reopens Codex Desktop.
-
-Required patch points are validated against each new upstream bundle before a
-package is offered. If upstream changes an expected bundle shape, the update
-stays uninstalled and `codex-update-manager status` reports the rebuild log
-instead of replacing the working app with a partially patched build.
-
-On GNOME, KDE, and other desktops with a Polkit agent, authorization appears as
-a normal graphical prompt. On minimal window managers, the updater opens the
-installed terminal emulator and presents Polkit's text prompt there. Passwords
-remain with the operating system authentication tools.
-
-Use the in-app **Update** action, close Codex Desktop when the ready notification
-appears, or run:
-
-```bash
-codex-update-manager check-now
-codex-update-manager status
-codex-update-manager install-ready
-```
-
-The AppImage build does not include the resident system updater. AppImage users,
-and anyone who disabled the updater at package-build time, can update from the
-repository manually:
-
-```bash
-git pull --ff-only
-make install-native
-```
-
-Run `codex-desktop-doctor` after an update if the app or launcher behaves
-unexpectedly.
-
-## Custom Models Are Optional
-
-Custom model support is opt-in. You only need the `custom-model-catalog`
-feature if you want non-OpenAI/custom provider rows in Desktop.
-
-For a normal official Codex/OpenAI account setup, do not route traffic through
-the shim. Official Codex/OpenAI traffic should stay on the first-party route.
-
-For the maintained custom-model build, install or package Desktop with the
-public profile:
-
-```bash
-make install-custom-models
-```
-
-`make install-custom-models` uses
-`profiles/custom-models/features.json`, enabling `open-target-discovery`,
-`codex-wrapper-updater`, and `custom-model-catalog`. It intentionally does not
-enable the Brave Origin Nightly browser-control override, which is a workstation
-profile choice rather than a public default. To build release artifacts without
-installing them locally, run:
-
-```bash
-make package-custom-models
-```
-
-When `custom-model-catalog` is enabled, Desktop reads model capability and
-context-window metadata from the configured custom catalog. That metadata
-controls the picker row, context footer, compaction threshold, and truncation
-policy for custom rows. Catalog rows declare their own `model_provider`, so a
-direct provider row can route through its own `[model_providers.<id>]` config
-while shim rows continue to route through `codex_shim`.
-
-For direct or local providers, use the setup helper to create the catalog row
-and print the matching official Codex provider config without storing secrets:
-
-```bash
-node scripts/custom-model-catalog-setup.js add-direct \
-  --provider openrouter \
-  --provider-name "OpenRouter" \
-  --base-url "https://openrouter.ai/api/v1" \
-  --wire-api responses \
-  --env-key OPENROUTER_API_KEY \
-  --slug openrouter-qwen3-coder \
-  --model qwen/qwen3-coder \
-  --display-name "Qwen3 Coder" \
-  --supports-tools
-```
-
-The helper writes catalog metadata to `$CODEX_HOME/custom-models.json` by
-default, prints a `[model_providers.<id>]` snippet for the user config, and
-leaves the global `model_provider` on `openai`.
-
-Before restarting Desktop, inspect the active catalog:
-
-```bash
-node scripts/custom-model-catalog-setup.js inspect --catalog "$CODEX_HOME/custom-models.json"
-```
-
-`inspect` is read-only. It validates the catalog and reports each custom row's
-picker label, provider route, context, compaction, truncation, and capability
-warnings without writing secrets or changing `~/.codex/config.toml`.
-
-The custom-model picker uses route-neutral model names. For example, a
-CLIProxyAPI route can display `Step 3.7 Flash:free` while the tooltip/provider
-metadata carries `CLIProxyAPI / Nous Portal`. Internal slugs may still include
-route prefixes so saved threads, overrides, and CLIProxyAPI routing remain
-stable.
-
-When multiple providers are present, the model submenu groups rows by provider
-using that same provider metadata. This keeps the picker scannable without
-putting provider prefixes back into the primary model labels. Current Desktop
-also recovers the group label from the generated `<model> via <provider>.`
-description when the upstream dropdown strips custom provider fields before
-rendering.
-
-On a clean machine, the picker only needs to show the normal official
-OpenAI/Codex rows. Custom provider groups appear only after the user installs a
-build with `custom-model-catalog` and provides a custom catalog. The catalog can
-define direct providers, local OpenAI-compatible providers, or optional
-`codex_shim` rows for CLIProxyAPI/local-adapter routing. The top-level Codex
-provider should still be `openai`.
-
-If the same custom model appears more than once under the same provider, treat
-that as stale catalog/build state rather than a local global-provider setting.
-Current Desktop and shim builds expect `/api/models` to expose one visible row
-per `(provider_display_name, display_name)` pair; route-stable slugs can still
-differ behind that visible row.
-
-OpenAI Codex also supports `--oss` for local Ollama and LM Studio providers.
-That remains available alongside catalog-driven local provider rows. See
-OpenAI's
-[advanced Codex configuration](https://developers.openai.com/codex/config-advanced#oss-mode-local-providers)
-for the `--oss` mode.
-
-Compaction can be moved earlier without reducing the displayed context window.
-For example, the optional shim can keep GLM 5.2 at a 1,000,000-token context
-while compacting at 165,000 tokens:
-
-```bash
-codex-shim desktop compaction set "GLM 5.2" 165k --truncation 48k --all
-systemctl --user restart codex-shim.service
-codex-shim doctor
-```
-
-## Troubleshooting First Installs
-
-| Symptom | What to try |
-|---|---|
-| The setup says dependencies are missing | Run `make bootstrap-native`; it calls the dependency installer for supported distros. |
-| An update is ready but no graphical password prompt appears | Close Codex Desktop. The updater should open a terminal authorization prompt automatically. If it cannot, run `codex-update-manager status`, then `codex-update-manager install-ready`. |
-| The app launches but looks incorrectly sized on Wayland | Try `codex-desktop --x11`. Some compositors need XWayland for the current Electron build. |
-| Browser control does not work | Install/enable the Codex Chrome extension for the selected Chromium-family browser, then run `codex-desktop-doctor`. |
-| Custom models do not appear | Ensure `custom-model-catalog` is enabled, the custom catalog is readable or the optional shim catalog service is running, and official traffic is still configured to use the default OpenAI provider. |
-| Custom model names show `CLIProxyAPI / Cursor ...` in the main picker label | Update `codex-shim`, regenerate its Desktop catalog, restart `codex-shim.service`, then restart Codex Desktop. Current shim builds keep route metadata in `provider_display_name` instead of the primary label. |
-| The same custom model appears twice under the same provider | Regenerate the custom catalog, or update both repositories if using shim, and inspect the catalog source for duplicate visible provider/model pairs. Current builds de-duplicate those pairs before they reach the selector. |
-| Custom model grouping is missing or all rows appear under one provider | Check `provider_display_name` in the active custom catalog and keep the generated description in the `<model> via <provider>.` shape; Desktop uses that as a fallback when upstream normalizes picker rows. For shim rows, inspect `codex-shim`'s `/api/models` output. |
-| A custom model shows the wrong context window | Regenerate the active custom catalog and restart Codex Desktop. If the row uses the shim, also update `codex-shim`, regenerate its Desktop catalog, and restart the shim service. |
-| Unsure what state the install is in | Run `codex-desktop-doctor --json` and include that output in an issue. |
-
-More detail is in [Native setup](docs/native-setup.md),
-[Build and packaging](docs/build-and-packaging.md), and
-[Troubleshooting](docs/troubleshooting.md).
-
-## Maintainer Model
-
-This repository is not a simple mirror of the original Linux wrapper. Its goal
-is to keep a controlled, auditable port of the desktop app with clear feature
-boundaries:
-
-- official Codex/OpenAI account traffic stays on the first-party route;
-- custom provider routing belongs behind explicit opt-in provider config, with
-  codex-shim available as an optional adapter for rows that need it;
-- Linux-only integrations live behind a feature framework instead of being
-  silently enabled for every user;
-- local assistive backends such as Computer Use are owned, reviewed source in
-  this repo or explicit user-selected commands.
-
-## Companion Repository
-
-Custom-model support is split deliberately across two public repositories:
-
-| Repository | Responsibility |
-|---|---|
-| [`rabesss/codex-linux`](https://github.com/rabesss/codex-linux) | Builds and packages Desktop, adds the custom-model picker, preserves provider identity across start/fork/resume, and exposes Linux Browser tooling. |
-| [`rabesss/codex-shim`](https://github.com/rabesss/codex-shim) | Optional adapter that serves a loopback model catalog and translates Codex Responses requests, streaming events, tool calls, and compaction to CLIProxyAPI-backed providers. |
-
-Neither repository should absorb the other's job. Desktop must keep official
-OpenAI/Codex traffic direct; the shim is an opt-in route for custom rows only.
-The maintained integration is on `main` in both repositories. The former
-`plugins/browser-control-linux` branch has been merged and removed.
-
-## What Is In This Repo
-
-The repo is organized around a generated app, not a checked-in app bundle.
-
-| Area | What it does |
-|---|---|
-| `install.sh`, `Makefile`, `scripts/lib/` | Download/extract the upstream DMG, rebuild native modules, patch the app, stage resources, and generate `codex-app/`. |
-| `scripts/patches/core/` | Fail-soft/fail-closed patch descriptors for Linux app behavior: windowing, tray, launch actions, browser integration, updater bridge, settings, feature gates, and webview fixes. |
-| `computer-use-linux/` | Rust MCP backend for Linux Computer Use, including screenshots, accessibility tree access, input paths, and compositor/window-manager backends. |
-| `plugins/openai-bundled/` | Bundled plugin payloads staged into the Linux app, including Computer Use metadata. |
-| `linux-features/` | Opt-in Linux feature system. Features can add patches, staged files, runtime hooks, package hooks, and cleanup metadata. |
-| `packaging/` | Debian, RPM, pacman, AppImage, desktop entry, polkit, and packaged runtime integration. |
-| `updater/` | Rust update manager that checks for newer upstream DMGs and can rebuild/install a native package after the app exits. |
-| `contrib/user-local-install/` | User-local install path for people who do not want a system package. |
-| `profiles/workstation/` | Example maintained feature profile. It is intentionally separate from the portable defaults. |
-| `tests/`, `.github/workflows/` | Script, patch, package, Rust, and upstream-drift validation. |
-
-Generated outputs such as `codex-app/`, `dist/`, `target/`, and local feature
-configuration are build artifacts and should not be committed.
-
-## Feature Model
-
-Core Linux compatibility is part of the base build. Optional integrations are
-selected before building.
-
-Core behavior includes:
-
-- Linux Electron launch support and managed Node runtime;
-- native package and AppImage build paths;
-- local webview server startup and warm-start handoff;
-- Linux file manager and browser integration patches;
-- Chromium-family browser-control target selection;
-- Chrome-compatible native messaging host support;
-- bundled Linux Computer Use backend registration;
-- updater bridge and package update manager;
-- fail-closed patch reports for required upstream compatibility.
-
-Optional features include:
-
-| Feature | ID | Notes |
+| Feature | ID | Purpose |
 |---|---|---|
-| Brave Origin browser control | `brave-origin-browser-control` | Optional feature on `main` that targets Brave Origin Nightly and the Codex Chrome extension. |
-| Custom Model Catalog | `custom-model-catalog` | Adds strict Desktop patch points for provider-aware custom catalog rows. |
-| Wrapper updater UI | `codex-wrapper-updater` | Exposes wrapper update actions in the app. |
-| Open Target Discovery | `open-target-discovery` | Adds Linux target discovery surfaces. |
+| Open target discovery | `open-target-discovery` | Discover local launch targets from Linux desktop entries. |
+| Wrapper updater UI | `codex-wrapper-updater` | Expose Linux wrapper update actions inside the app. |
+| Custom model catalog | `custom-model-catalog` | Add provider-aware custom rows to the Desktop model picker. |
+| Browser target override | `brave-origin-browser-control` | Use a reviewed optional browser-control target instead of the portable default. |
 
-Enable features by creating `linux-features/features.json`:
+The guided installer can write the feature config. Advanced users can create
+`linux-features/features.json` manually:
 
 ```json
 {
@@ -387,170 +185,98 @@ Then rebuild:
 make install-native
 ```
 
-Private features can live under the git-ignored
-`linux-features/local/<feature-id>/` directory and use the same feature
-manifest contract.
+## Custom Models Boundary
 
-## Removed Optional Features
+Custom-model support is optional and route-explicit.
 
-The inherited and sunset optional features that are not part of the maintained
-Linux port have been removed from this fork. That includes `agent-workspace`,
-`appshots`, `copilot-reasoning-effort`, `conversation-mode`, `read-aloud`,
-`read-aloud-mcp`, `remote-control-ui`, `remote-mobile-control`, `zed-opener`,
-and `example-feature`.
+Official Codex/OpenAI account traffic should stay on the first-party route.
+Do not make the global Codex provider a shim or proxy just because custom rows
+are enabled.
 
-Custom-model browser control uses the patched official Browser/Chrome plugin
-path and the maintained Linux Computer Use backend. The active workstation build
-does not stage `agent-workspace-linux`, voice runtimes, remote-control daemons,
-editor-specific opener code, or optional screenshot helpers. Reintroduce any of
-those capabilities only as a new reviewed feature with tests and update-builder
-coverage.
+When `custom-model-catalog` is enabled, Desktop can read a local catalog of
+custom rows. Each row declares its own provider route and capabilities. Direct
+or local providers use their own Codex provider config. `rabesss/codex-shim` is
+an optional companion adapter for rows that need a local translation layer; it
+is not part of the official OpenAI route.
 
-## Browser Control
+Catalog metadata may describe display names, provider labels, context windows,
+reasoning support, image support, and tool support. It must not store API keys
+or other credentials. Keep provider secrets in the user's normal Codex or OS
+credential mechanism.
 
-Users can choose the browser Codex controls, but the choice is limited to
-browser/profile layouts that this repo knows how to patch and verify.
-
-Core builds support Google Chrome, Brave Browser stable, and Chromium. The
-optional `brave-origin-browser-control` feature on `main` adds Brave Origin
-Nightly. Firefox-family browsers and unlisted Chromium-family browsers need a
-new feature before they are safe browser-control targets.
-
-See [Browser Control](docs/browser-control.md) for setup steps, limitations,
-and an agent prompt users can hand to their assistant.
-
-## Custom Models
-
-Enable `custom-model-catalog` when provider-aware custom rows should appear
-beside official models. The Desktop feature owns UI and session routing. A
-shared catalog owns row metadata. Direct and local rows use their own
-`[model_providers.<id>]` config, while the optional shim owns CLIProxyAPI/local
-adapter protocol translation for rows that use `codex_shim`.
-
-Current builds preserve `model`, `modelProvider`, provider configuration, and
-dynamic tools when a custom thread is started, forked, or resumed. This fixes a
-previous failure where `/goal` could fork a custom thread without its
-custom provider route, after which Desktop stopped sending that thread's
-requests to the selected provider. Custom threads also skip the first-party
-automatic title request, so an exhausted official account does not create a
-misleading title-generation error after a successful custom-model turn. The
-durable non-default provider definition for each saved custom row must still
-exist after restart; the top-level default must remain `openai`.
-
-The optional shim must be current enough to preserve native Responses tool
-item types and Desktop namespace metadata. Browser/MCP calls from custom rows
-depend on the selected provider path: this repo exposes and preserves dynamic
-tools, while `codex-shim` flattens nested or flat MCP tool names for
-CLIProxyAPI-backed providers and restores `type`, `namespace`, and child
-`name` on the return path. Rows that are not verified for tool calling should
-not advertise `supports_tools`.
-
-See [Custom models](docs/custom-models.md) and the companion
-[`codex-shim` Linux Desktop guide](https://github.com/rabesss/codex-shim/blob/main/docs/linux-desktop.md).
-
-## Known Constraints
-
-- Browser control is reliable for normal read, navigate, click, fill, and
-  screenshot workflows, but links that open with `target="_blank"` may create
-  a tab the extension backend does not surface. Read the link target and
-  navigate explicitly when tab discovery matters.
-- Locator behavior differs by backend. In-app Browser locators can re-resolve
-  after reload, while the extension backend can return a count of zero for a
-  locator built before navigation. Re-snapshot before interaction when page
-  state changed.
-- The Browser Playwright subset intentionally omits general `page`, `mouse`,
-  `keyboard`, and forced-action APIs. Use the documented locator methods and
-  `evaluate` for scrolling.
-- Navigation waits live under `tab.playwright`, for example
-  `tab.playwright.waitForLoadState(...)`; there is no `tab.waitForLoadState`
-  shortcut.
-- DOM CUA currently returns visible nodes as a string, not JSON. Parse the
-  `node_id` values from that string before calling DOM CUA actions.
-- In-app Browser file upload and HTML5 drag-and-drop are not currently
-  supported by the in-app backend.
-- Chrome internal pages cannot be claimed. The extension backend also does not
-  implement `browser.tabs.content`; use per-tab DOM snapshot/evaluation APIs.
-- Navigation performs an upstream site-safety status check. It can add visible
-  latency and must not be bypassed by this port.
-- The in-app backend can log a non-blocking unsupported
-  `Target.setAutoAttach` request while normal locator actions still succeed.
-- Browser telemetry may occasionally report a non-blocking execution-context
-  error even when the requested action succeeds.
-
-More detailed workarounds and API notes are in
-[Browser Control](docs/browser-control.md#backend-constraints).
-
-## Installed-State Doctor
-
-Native packages install a lightweight readiness command:
+For the public custom-model package profile:
 
 ```bash
-codex-desktop-doctor
-codex-desktop-doctor --json
+make install-custom-models
+make package-custom-models
 ```
 
-The doctor checks the installed launcher, desktop entry, Electron runtime,
-managed Node.js runtime, update service, browser-control plugin staging, and
-Computer Use backend without launching Desktop.
-Failed checks are treated as readiness blockers; warnings are diagnostics for
-optional or environment-dependent integrations.
+That profile enables `open-target-discovery`, `codex-wrapper-updater`, and
+`custom-model-catalog`. It intentionally leaves local browser target policy out
+of the public default.
 
-When the Linux desktop settings page is available, its **Installed readiness**
-row calls the same doctor from inside the app and shows the current pass,
-warning, or blocker summary. Set `CODEX_DESKTOP_DOCTOR_PATH` only for
-nonstandard side-by-side installs that need a custom doctor command.
+See [Custom models](docs/custom-models.md) for catalog examples and
+capability fields.
 
-## Trust And Routing
+## Security And Credentials
 
-This repo should not hide network paths from the user.
+Security expectations for public builds and docs:
 
-- Official Codex account traffic remains first-party OpenAI/Codex traffic.
-- Custom model/provider traffic should be explicit and labeled by the route the
-  user selected.
-- A model that does not support image input must not be advertised as
-  multimodal.
-- Third-party Computer Use plugin staging is blocked by policy checks.
-- Optional feature downloads must be explicit and reviewed.
+- Do not redistribute the official OpenAI DMG, extracted `.app`, or native
+  packages that contain OpenAI app code.
+- Do not commit plaintext API keys, session tokens, debug payload captures,
+  private launchers, or service units that inject secrets.
+- Keep official OpenAI/Codex traffic direct unless the user explicitly selects
+  a custom row with its own route.
+- Keep custom provider credentials outside catalog metadata.
+- Treat package installation as operating-system authorization. Polkit or the
+  package manager may ask for a login/admin password; that is distinct from
+  Codex account, keyring, or provider API credentials.
+- Keep optional downloads and integrations behind reviewed feature boundaries.
 
-Implementation-specific routing, local workstation policy, and maintainer
-handoff notes should stay outside the public documentation unless they are
-generalized into user-facing setup material.
+## Manual Promotion Checklist
 
-## Validation
+Before promoting a new upstream app pin:
 
-Useful checks while developing:
+1. Capture DMG URL, version, SHA256, size, ETag, and `Last-Modified`.
+2. Validate the candidate against the Linux patch set and save the patch report.
+3. Confirm CI artifacts contain only metadata, hashes, logs, and reports.
+4. Verify the wrapper revision used for validation is committed and pushed.
+5. Rebuild a local package from the candidate and run focused updater/package
+   checks.
+6. Dogfood the installed app: launch, login/session reuse, update UI, browser
+   integration when enabled, and `codex-desktop-doctor`.
+7. Confirm official Codex/OpenAI routing remains direct.
+8. Record the minimum wrapper revision required by the approved pin.
+9. Promote the candidate by updating the approved app pin in Git.
+10. Keep rollback instructions and the previous known-good package/version
+    reachable.
 
-```bash
-git diff --check
-scripts/workstation/verify-policy.sh
-node --test scripts/patch-linux-window-ui.test.js
-node --test linux-features/*/test.js
-cargo test --workspace
-bash tests/scripts_smoke.sh
-```
+## Troubleshooting First Installs
 
-For a side-by-side app build before replacing an installed package:
+| Symptom | First check |
+|---|---|
+| Dependencies are missing | Run `make bootstrap-native`; it calls the dependency installer for supported distributions. |
+| An update is ready but no graphical authorization appears | Close Codex Desktop, run `codex-update-manager status`, then follow the printed recovery command. |
+| The app launches with Wayland sizing or popup issues | Try `codex-desktop --x11`. |
+| Browser control does not work | Check the selected browser/profile integration with `codex-desktop-doctor`. |
+| Custom models do not appear | Confirm `custom-model-catalog` is enabled and the catalog is readable. |
+| Unsure what state the install is in | Run `codex-desktop-doctor --json` and include that output in a bug report. |
 
-```bash
-scripts/workstation/build-dev.sh
-```
+More detail is in [Build and packaging](docs/build-and-packaging.md),
+[Updater](docs/updater.md), [Architecture](docs/architecture.md), and
+[Troubleshooting](docs/troubleshooting.md).
 
-For browser-control profile validation on a built app:
-
-```bash
-scripts/workstation/verify-browser-control.sh codex-app
-```
-
-## Documentation
+## Project Docs
 
 - [Architecture](docs/architecture.md)
 - [Build and packaging](docs/build-and-packaging.md)
+- [Updater](docs/updater.md)
 - [Native setup](docs/native-setup.md)
-- [Linux Computer Use](docs/linux-computer-use.md)
 - [Custom models](docs/custom-models.md)
 - [Browser Control](docs/browser-control.md)
 - [Linux Features architecture](docs/linux-features-architecture.md)
-- [Updater](docs/updater.md)
+- [Linux Computer Use](docs/linux-computer-use.md)
 - [Troubleshooting](docs/troubleshooting.md)
 - [Nix](docs/nix.md)
 - [Webview server evaluation](docs/webview-server-evaluation.md)
@@ -558,8 +284,9 @@ scripts/workstation/verify-browser-control.sh codex-app
 ## Disclaimer
 
 This is an unofficial community project. Codex Desktop is a product of OpenAI.
-This tool automates a local conversion process for users who already have
-access to the upstream app.
+This repository automates a local conversion and Linux packaging process around
+the official app payload. It is not endorsed by OpenAI or by the inspiration
+project unless those maintainers explicitly say otherwise.
 
 ## License
 

@@ -37,12 +37,13 @@ const REQUIRED_BUNDLE_FILES: [(&str, &str); 15] = [
     ("assets/codex.png", "assets/codex.png"),
     ("linux-features", "linux-features"),
 ];
-const OPTIONAL_BUNDLE_FILES: [(&str, &str); 5] = [
+const OPTIONAL_BUNDLE_FILES: [(&str, &str); 6] = [
     ("CHANGELOG.md", "CHANGELOG.md"),
     (
         ".codex-linux/source-info.json",
         ".codex-linux/source-info.json",
     ),
+    ("release", "release"),
     ("scripts/build-rpm.sh", "scripts/build-rpm.sh"),
     ("scripts/build-pacman.sh", "scripts/build-pacman.sh"),
     (

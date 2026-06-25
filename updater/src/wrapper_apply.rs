@@ -26,7 +26,7 @@ use crate::{
     config::{RuntimeConfig, RuntimePaths},
     install, notify,
     state::{PersistedState, UpdateStatus},
-    upstream, wrapper,
+    upstream, upstream_lock, wrapper,
 };
 
 /// How the running app was installed, which determines how a wrapper update is
@@ -350,18 +350,60 @@ async fn cached_or_downloaded_dmg(
     state: &mut PersistedState,
     paths: &RuntimePaths,
 ) -> Result<PathBuf> {
+    let policy = upstream_lock::policy_for_config(config)?;
+
     if let Some(dmg) = state.artifact_paths.dmg_path.clone() {
         if dmg.exists() {
-            return Ok(dmg);
+            if let upstream_lock::UpstreamDmgPolicy::Approved(approved) = &policy {
+                let sha256 = upstream::sha256_file(&dmg)?;
+                if sha256 != approved.sha256 {
+                    warn!(
+                        cached = %dmg.display(),
+                        cached_sha256 = %sha256,
+                        approved_sha256 = %approved.sha256,
+                        "ignoring cached DMG that does not match approved upstream lock"
+                    );
+                } else {
+                    return Ok(dmg);
+                }
+            } else {
+                return Ok(dmg);
+            }
         }
     }
 
     let client = reqwest::Client::builder().build()?;
     let downloads_dir = config.workspace_root.join("downloads");
-    let downloaded =
-        upstream::download_dmg(&client, &config.dmg_url, &downloads_dir, chrono::Utc::now())
+    let downloaded = match &policy {
+        upstream_lock::UpstreamDmgPolicy::Approved(approved) => {
+            let metadata = upstream::fetch_remote_metadata(&client, &approved.dmg_url).await?;
+            if upstream_lock::metadata_indicates_unapproved_candidate(approved, &metadata) {
+                anyhow::bail!(
+                    "Live upstream DMG metadata differs from approved pin {}; not rebuilding wrapper against an unapproved app",
+                    approved.sha256
+                );
+            }
+            upstream::download_dmg_with_expected_sha256(
+                &client,
+                &approved.dmg_url,
+                &downloads_dir,
+                chrono::Utc::now(),
+                &approved.sha256,
+            )
             .await
-            .context("Failed to download upstream DMG for wrapper rebuild")?;
+            .context("Failed to download approved upstream DMG for wrapper rebuild")?
+        }
+        upstream_lock::UpstreamDmgPolicy::Latest => {
+            upstream::download_dmg(&client, &config.dmg_url, &downloads_dir, chrono::Utc::now())
+                .await
+                .context("Failed to download upstream DMG for wrapper rebuild")?
+        }
+    };
+    if let upstream_lock::UpstreamDmgPolicy::Approved(approved) = &policy {
+        state.dmg_sha256 = Some(approved.sha256.clone());
+    } else {
+        state.dmg_sha256 = Some(downloaded.sha256.clone());
+    }
     state.artifact_paths.dmg_path = Some(downloaded.path.clone());
     let _ = state.save(&paths.state_file);
     Ok(downloaded.path)

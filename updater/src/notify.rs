@@ -65,9 +65,9 @@ fn base_notification(summary: &str, body: &str) -> notify_rust::Notification {
         .hint(Hint::DesktopEntry(DESKTOP_ENTRY.to_owned()));
 
     if let Some(icon_path) = icon_path.as_deref() {
-        let icon_uri = path_to_file_uri(icon_path);
-        notification.icon(&icon_uri);
-        notification.image_path(&icon_uri);
+        let icon_path = icon_path.to_string_lossy();
+        notification.icon(&icon_path);
+        notification.image_path(&icon_path);
     } else {
         notification.icon(DESKTOP_ENTRY);
     }
@@ -106,26 +106,9 @@ fn repo_icon_from_exe(current_exe: &Path) -> Option<PathBuf> {
     Some(target_dir.parent()?.join("assets/codex.png"))
 }
 
-fn path_to_file_uri(path: &Path) -> String {
-    let path = path.as_os_str().as_encoded_bytes();
-    let mut uri = String::from("file://");
-
-    for &byte in path {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' => {
-                uri.push(byte as char)
-            }
-            _ => uri.push_str(&format!("%{byte:02X}")),
-        }
-    }
-
-    uri
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::os::unix::ffi::OsStrExt;
     use tempfile::tempdir;
 
     #[test]
@@ -162,14 +145,5 @@ mod tests {
         let resolved = resolve_icon_path_from_candidates(vec![missing]);
 
         assert_eq!(resolved, None);
-    }
-
-    #[test]
-    fn file_uri_escapes_spaces_and_non_ascii_bytes() {
-        let path = Path::new(std::ffi::OsStr::from_bytes(b"/tmp/codex icon-\xC3\xB1.png"));
-
-        let uri = path_to_file_uri(path);
-
-        assert_eq!(uri, "file:///tmp/codex%20icon-%C3%B1.png");
     }
 }

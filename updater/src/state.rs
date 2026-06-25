@@ -63,6 +63,18 @@ pub struct ArtifactPaths {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+/// Metadata for a live upstream DMG that differs from the approved default pin.
+pub struct UnapprovedUpstreamCandidate {
+    pub dmg_url: String,
+    pub etag: Option<String>,
+    pub last_modified: Option<String>,
+    pub content_length: Option<u64>,
+    pub headers_fingerprint: String,
+    pub detected_at: DateTime<Utc>,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 /// Full updater state stored on disk between daemon runs.
 pub struct PersistedState {
     pub installed_version: String,
@@ -118,6 +130,10 @@ pub struct PersistedState {
     /// so applying the remote candidate would be a downgrade.
     #[serde(default)]
     pub wrapper_dev_mode: Option<bool>,
+    /// Live upstream DMG metadata that differs from the approved lock. This is
+    /// informational only; default installs must wait for a promoted lock.
+    #[serde(default)]
+    pub unapproved_upstream_candidate: Option<UnapprovedUpstreamCandidate>,
 }
 
 impl PersistedState {
@@ -152,6 +168,7 @@ impl PersistedState {
             candidate_wrapper_commit: None,
             wrapper_changelog: None,
             wrapper_dev_mode: None,
+            unapproved_upstream_candidate: None,
         }
     }
 

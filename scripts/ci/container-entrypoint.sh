@@ -279,6 +279,7 @@ run_deb_job() {
     assert_contains_file /tmp/deb-contents.txt './usr/bin/codex-update-manager'
     assert_contains_file /tmp/deb-contents.txt './usr/lib/systemd/user/codex-update-manager.service'
     assert_contains_file /tmp/deb-contents.txt './opt/codex-desktop/update-builder/install.sh'
+    assert_contains_file /tmp/deb-contents.txt './opt/codex-desktop/update-builder/release/upstream-dmg-lock.json'
     assert_contains_file /tmp/deb-contents.txt './opt/codex-desktop/update-builder/launcher/webview-server.py'
     assert_contains_file /tmp/deb-contents.txt './opt/codex-desktop/.codex-linux/codex-packaged-runtime.sh'
 
@@ -334,6 +335,7 @@ run_rpm_job() {
     assert_contains_file /tmp/rpm-contents.txt '/usr/bin/codex-update-manager'
     assert_contains_file /tmp/rpm-contents.txt '/usr/lib/systemd/user/codex-update-manager.service'
     assert_contains_file /tmp/rpm-contents.txt '/opt/codex-desktop/update-builder/install.sh'
+    assert_contains_file /tmp/rpm-contents.txt '/opt/codex-desktop/update-builder/release/upstream-dmg-lock.json'
     assert_contains_file /tmp/rpm-contents.txt '/opt/codex-desktop/update-builder/launcher/webview-server.py'
     assert_contains_file /tmp/rpm-contents.txt '/opt/codex-desktop/.codex-linux/codex-packaged-runtime.sh'
 
@@ -383,6 +385,7 @@ run_pacman_job() {
     assert_contains_file /tmp/pacman-contents.txt 'usr/bin/codex-update-manager'
     assert_contains_file /tmp/pacman-contents.txt 'usr/lib/systemd/user/codex-update-manager.service'
     assert_contains_file /tmp/pacman-contents.txt 'opt/codex-desktop/update-builder/install.sh'
+    assert_contains_file /tmp/pacman-contents.txt 'opt/codex-desktop/update-builder/release/upstream-dmg-lock.json'
     assert_contains_file /tmp/pacman-contents.txt 'opt/codex-desktop/update-builder/launcher/webview-server.py'
     assert_contains_file /tmp/pacman-contents.txt 'opt/codex-desktop/.codex-linux/codex-packaged-runtime.sh'
 

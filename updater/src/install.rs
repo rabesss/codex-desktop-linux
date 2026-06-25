@@ -50,11 +50,13 @@ const TERMINAL_INSTALL_SCRIPT: &str = r#"
 printf '\nCodex Desktop update\n\n'
 printf 'System authorization is required to install the rebuilt Linux package.\n\n'
 
-if command -v pkexec >/dev/null 2>&1; then
-    pkexec "$1" "$2" --path "$3"
-else
-    sudo -- "$1" "$2" --path "$3"
+if ! command -v pkexec >/dev/null 2>&1; then
+    printf 'Polkit authorization is required, but pkexec is not installed.\n'
+    printf 'Install polkit or run the manual pkexec command shown by codex-update-manager status.\n'
+    exit 127
 fi
+
+pkexec "$1" "$2" --path "$3"
 status=$?
 
 if [ "$status" -eq 0 ]; then

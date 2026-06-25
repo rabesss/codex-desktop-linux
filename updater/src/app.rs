@@ -7,7 +7,7 @@ use crate::{
     config::{RuntimeConfig, RuntimePaths},
     feature_picker, install, install_rollback, liveness, logging, notify, rollback,
     state::{CliStatus, PersistedState, UpdateStatus},
-    upstream, wrapper, wrapper_apply,
+    upstream, upstream_lock, wrapper, wrapper_apply,
 };
 use anyhow::{Context, Result};
 use chrono::{Duration as ChronoDuration, Utc};
@@ -209,6 +209,7 @@ fn set_idle_without_upstream_candidate(
     state.waiting_for_app_exit_auto_install = false;
     state.artifact_paths.package_path = None;
     state.error_message = None;
+    state.unapproved_upstream_candidate = None;
     persist_state(paths, state)
 }
 
@@ -558,6 +559,14 @@ fn run_status(
                 .as_deref()
                 .unwrap_or("none")
         );
+        if let Some(candidate) = &state.unapproved_upstream_candidate {
+            println!(
+                "unapproved_upstream_candidate: {} ({})",
+                candidate.headers_fingerprint, candidate.reason
+            );
+        } else {
+            println!("unapproved_upstream_candidate: none");
+        }
         println!("{}", update_error_status_line(state));
         println!("cli_status: {:?}", state.cli_status);
         println!(
@@ -810,12 +819,64 @@ async fn run_check_cycle(
     persist_state(paths, state)?;
 
     let result: Result<()> = async {
-        let metadata = upstream::fetch_remote_metadata(&client, &config.dmg_url).await?;
+        let policy = upstream_lock::policy_for_config(config)?;
+        let dmg_url = match &policy {
+            upstream_lock::UpstreamDmgPolicy::Approved(approved) => approved.dmg_url.as_str(),
+            upstream_lock::UpstreamDmgPolicy::Latest => config.dmg_url.as_str(),
+        };
+        let metadata = upstream::fetch_remote_metadata(&client, dmg_url).await?;
         let previous_headers_fingerprint = state.remote_headers_fingerprint.clone();
         state.remote_headers_fingerprint = Some(metadata.headers_fingerprint.clone());
         state.last_successful_check_at = Some(Utc::now());
 
-        if previous_headers_fingerprint.as_deref() == Some(metadata.headers_fingerprint.as_str())
+        if let upstream_lock::UpstreamDmgPolicy::Approved(approved) = &policy {
+            upstream_lock::refresh_approved_installed_state(config, state, approved);
+            if upstream_lock::metadata_indicates_unapproved_candidate(approved, &metadata) {
+                state.status = UpdateStatus::Idle;
+                state.candidate_version = None;
+                state.artifact_paths.package_path = None;
+                state.error_message = None;
+                upstream_lock::record_unapproved_candidate(state, approved, &metadata);
+                persist_state(paths, state)?;
+                let event_key = format!(
+                    "unapproved_upstream_candidate:{}",
+                    metadata.headers_fingerprint
+                );
+                maybe_notify_with_event_key(
+                    state,
+                    paths,
+                    config.notifications,
+                    &event_key,
+                    "Codex upstream candidate needs approval",
+                    "A newer upstream DMG was detected, but it is not approved for default Linux updates yet.",
+                )?;
+                info!(
+                    approved_sha256 = %approved.sha256,
+                    live_headers = %metadata.headers_fingerprint,
+                    "live upstream DMG differs from approved lock; waiting for promotion"
+                );
+                return Ok(());
+            }
+
+            if upstream_lock::approved_dmg_already_installed(config, state, approved)
+                && !retrying_failed_update
+            {
+                state.dmg_sha256 = Some(approved.sha256.clone());
+                set_idle_without_upstream_candidate(state, paths)?;
+                info!(
+                    approved_sha256 = %approved.sha256,
+                    "approved upstream DMG is already installed"
+                );
+                return Ok(());
+            }
+
+            upstream_lock::ensure_wrapper_minimum(config, state, approved)?;
+        } else {
+            state.unapproved_upstream_candidate = None;
+        }
+
+        if matches!(&policy, upstream_lock::UpstreamDmgPolicy::Latest)
+            && previous_headers_fingerprint.as_deref() == Some(metadata.headers_fingerprint.as_str())
             && state.dmg_sha256.is_some()
             && !retrying_failed_update
         {
@@ -827,8 +888,24 @@ async fn run_check_cycle(
         set_status(state, paths, UpdateStatus::DownloadingDmg)?;
 
         let downloads_dir = config.workspace_root.join("downloads");
-        let downloaded =
-            upstream::download_dmg(&client, &config.dmg_url, &downloads_dir, Utc::now()).await?;
+        let downloaded = match &policy {
+            upstream_lock::UpstreamDmgPolicy::Approved(approved) => {
+                let mut downloaded = upstream::download_dmg_with_expected_sha256(
+                    &client,
+                    &approved.dmg_url,
+                    &downloads_dir,
+                    Utc::now(),
+                    &approved.sha256,
+                )
+                .await?;
+                downloaded.candidate_version = approved.package_version()?;
+                downloaded
+            }
+            upstream_lock::UpstreamDmgPolicy::Latest => {
+                upstream::download_dmg(&client, &config.dmg_url, &downloads_dir, Utc::now())
+                    .await?
+            }
+        };
 
         if state
             .rollback_blocked_candidate_version
@@ -850,7 +927,8 @@ async fn run_check_cycle(
             return Ok(());
         }
 
-        if state.dmg_sha256.as_deref() == Some(downloaded.sha256.as_str())
+        if matches!(&policy, upstream_lock::UpstreamDmgPolicy::Latest)
+            && state.dmg_sha256.as_deref() == Some(downloaded.sha256.as_str())
             && !retrying_failed_update
         {
             state.artifact_paths.dmg_path = Some(downloaded.path);
@@ -864,6 +942,7 @@ async fn run_check_cycle(
         state.candidate_version = Some(downloaded.candidate_version);
         state.dmg_sha256 = Some(downloaded.sha256);
         state.artifact_paths.dmg_path = Some(downloaded.path.clone());
+        state.unapproved_upstream_candidate = None;
         state.notified_events.clear();
         state.save(&paths.state_file)?;
 
@@ -1487,7 +1566,7 @@ fn maybe_send_manual_install_required_notification(enabled: bool) {
     maybe_send_notification(
         enabled,
         "Codex update needs manual install",
-        "Automatic authorization and the terminal fallback were unavailable. Run codex-update-manager status for details.",
+        "Polkit authorization could not be opened automatically. Run codex-update-manager status for the manual pkexec command.",
     );
 }
 
@@ -1583,6 +1662,10 @@ fn notify_failure(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use wiremock::{
+        matchers::{method, path},
+        Mock, MockServer, ResponseTemplate,
+    };
 
     fn test_paths(root: &std::path::Path) -> RuntimePaths {
         RuntimePaths {
@@ -1609,6 +1692,38 @@ mod tests {
             wrapper_remote: String::new(),
             wrapper_branch: "main".to_string(),
         }
+    }
+
+    fn write_test_upstream_lock(
+        builder_root: &std::path::Path,
+        dmg_url: &str,
+        sha256: &str,
+        size: u64,
+    ) -> Result<()> {
+        let release_dir = builder_root.join("release");
+        std::fs::create_dir_all(&release_dir)?;
+        let lock = serde_json::json!({
+            "schema_version": 1,
+            "approved": {
+                "upstream_app_version": "26.616.71553",
+                "dmg_url": dmg_url,
+                "sha256": sha256,
+                "size": size,
+                "etag": "approved",
+                "last_modified": "Thu, 25 Jun 2026 00:00:00 GMT",
+                "approved_at": "2026-06-25T00:00:00Z",
+                "approved_by": "manual",
+                "wrapper_min_commit": null,
+                "patch_report": null,
+                "notes": "test lock"
+            },
+            "candidate": null
+        });
+        std::fs::write(
+            release_dir.join("upstream-dmg-lock.json"),
+            format!("{}\n", serde_json::to_string_pretty(&lock)?),
+        )?;
+        Ok(())
     }
 
     #[test]
@@ -1932,6 +2047,92 @@ mod tests {
             assert_eq!(state.last_check_at, None);
         }
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn approved_policy_records_unapproved_candidate_without_downloading() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let paths = test_paths(temp.path());
+        paths.ensure_dirs()?;
+        let server = MockServer::start().await;
+        Mock::given(method("HEAD"))
+            .and(path("/Codex.dmg"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("ETag", "live")
+                    .insert_header("Last-Modified", "Fri, 26 Jun 2026 00:00:00 GMT")
+                    .insert_header("Content-Length", "99"),
+            )
+            .mount(&server)
+            .await;
+
+        let mut config = test_config(temp.path());
+        let dmg_url = format!("{}/Codex.dmg", server.uri());
+        write_test_upstream_lock(
+            &config.builder_bundle_root,
+            &dmg_url,
+            "efedc6c8ffa8f9479ddded3fed40c5cad261c779b798fdd161847f48141985c2",
+            10,
+        )?;
+        config.dmg_url = "https://example.invalid/should-not-be-used.dmg".to_string();
+        let mut state = PersistedState::new(false);
+
+        run_check_cycle(&config, &mut state, &paths).await?;
+
+        assert_eq!(state.status, UpdateStatus::Idle);
+        assert_eq!(state.candidate_version, None);
+        assert_eq!(state.artifact_paths.dmg_path, None);
+        assert!(state.unapproved_upstream_candidate.is_some());
+        assert_eq!(state.dmg_sha256, None);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn approved_policy_skips_when_approved_hash_is_installed() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let paths = test_paths(temp.path());
+        paths.ensure_dirs()?;
+        let server = MockServer::start().await;
+        Mock::given(method("HEAD"))
+            .and(path("/Codex.dmg"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("ETag", "approved")
+                    .insert_header("Last-Modified", "Thu, 25 Jun 2026 00:00:00 GMT")
+                    .insert_header("Content-Length", "10"),
+            )
+            .mount(&server)
+            .await;
+
+        let config = test_config(temp.path());
+        let approved_sha = "efedc6c8ffa8f9479ddded3fed40c5cad261c779b798fdd161847f48141985c2";
+        write_test_upstream_lock(
+            &config.builder_bundle_root,
+            &format!("{}/Codex.dmg", server.uri()),
+            approved_sha,
+            10,
+        )?;
+        std::fs::create_dir_all(temp.path().join("resources"))?;
+        std::fs::write(
+            temp.path().join("resources/codex-linux-build-info.json"),
+            serde_json::json!({
+                "upstreamDmg": {
+                    "sha256": approved_sha,
+                }
+            })
+            .to_string(),
+        )?;
+        let mut state = PersistedState::new(false);
+        state.installed_version = "2026.06.23.154809+efedc6c8-1".to_string();
+
+        run_check_cycle(&config, &mut state, &paths).await?;
+
+        assert_eq!(state.status, UpdateStatus::Idle);
+        assert_eq!(state.candidate_version, None);
+        assert_eq!(state.dmg_sha256.as_deref(), Some(approved_sha));
+        assert_eq!(state.unapproved_upstream_candidate, None);
+        assert_eq!(state.artifact_paths.dmg_path, None);
         Ok(())
     }
 

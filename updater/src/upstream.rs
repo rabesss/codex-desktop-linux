@@ -122,6 +122,41 @@ pub async fn download_dmg(
     })
 }
 
+/// Downloads a DMG and rejects it unless the SHA256 matches the approved pin.
+pub async fn download_dmg_with_expected_sha256(
+    client: &Client,
+    dmg_url: &str,
+    destination_dir: &Path,
+    version_timestamp: DateTime<Utc>,
+    expected_sha256: &str,
+) -> Result<DownloadedDmg> {
+    let downloaded = download_dmg(client, dmg_url, destination_dir, version_timestamp).await?;
+    anyhow::ensure!(
+        downloaded.sha256 == expected_sha256,
+        "Downloaded upstream DMG hash {} did not match approved hash {}",
+        downloaded.sha256,
+        expected_sha256
+    );
+    Ok(downloaded)
+}
+
+/// Computes the SHA256 for an existing DMG or cached package input.
+pub fn sha256_file(path: &Path) -> Result<String> {
+    let bytes =
+        std::fs::read(path).with_context(|| format!("Failed to read {}", path.display()))?;
+    Ok(sha256_bytes(&bytes))
+}
+
+fn sha256_bytes(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>()
+}
+
 /// Derives a local package version from the DMG hash and download timestamp.
 pub fn derive_candidate_version(sha256: &str, timestamp: DateTime<Utc>) -> Result<String> {
     let short_hash = sha256
@@ -198,6 +233,44 @@ mod tests {
             "678cd508ffe0071e217020a7a4eecbebe25362c022ac78c13a5ae87b7a3a0c92"
         );
         assert_eq!(downloaded.candidate_version, "2026.03.24.120000+678cd508");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn download_with_expected_hash_rejects_mismatch() -> Result<()> {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/Codex.dmg"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(b"payload".to_vec()))
+            .mount(&server)
+            .await;
+
+        let client = Client::builder().build()?;
+        let temp = tempdir()?;
+        let error = download_dmg_with_expected_sha256(
+            &client,
+            &format!("{}/Codex.dmg", server.uri()),
+            temp.path(),
+            Utc.with_ymd_and_hms(2026, 3, 24, 12, 0, 0).unwrap(),
+            "0000000000000000000000000000000000000000000000000000000000000000",
+        )
+        .await
+        .expect_err("hash mismatch should fail");
+
+        assert!(error.to_string().contains("did not match approved hash"));
+        Ok(())
+    }
+
+    #[test]
+    fn hashes_existing_file() -> Result<()> {
+        let temp = tempdir()?;
+        let path = temp.path().join("Codex.dmg");
+        std::fs::write(&path, b"payload")?;
+
+        assert_eq!(
+            sha256_file(&path)?,
+            "239f59ed55e737c77147cf55ad0c1b030b6d7ee748a7426952f9b852d5a935e5"
+        );
         Ok(())
     }
 

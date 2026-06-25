@@ -11,6 +11,8 @@ on:
       - scripts/patch-linux-window-ui.test.js
       - scripts/patches/**
       - scripts/ci/validate-patch-report.js
+      - scripts/ci/*candidate*.js
+      - scripts/ci/*no-payload*.js
       - .github/workflows/upstream-build-app.yml
   push:
     branches:
@@ -22,11 +24,14 @@ on:
       - scripts/patch-linux-window-ui.test.js
       - scripts/patches/**
       - scripts/ci/validate-patch-report.js
+      - scripts/ci/*candidate*.js
+      - scripts/ci/*no-payload*.js
       - .github/workflows/upstream-build-app.yml
   workflow_dispatch:
 
 permissions:
   contents: read
+  issues: write
 
 env:
   UPSTREAM_DMG_URL: https://persistent.oaistatic.com/codex-app-prod/Codex.dmg
@@ -120,7 +125,6 @@ jobs:
           cat > upstream-dmg-metadata.json <<JSON
           {
             "url": "$UPSTREAM_DMG_URL",
-            "path": "$UPSTREAM_DMG_PATH",
             "last_modified": "${{ steps.upstream-metadata.outputs.last_modified }}",
             "etag": "${{ steps.upstream-metadata.outputs.etag }}",
             "content_length": "${{ steps.upstream-metadata.outputs.content_length }}",
@@ -134,16 +138,96 @@ jobs:
       - name: Build app from upstream DMG
         run: CODEX_PATCH_REPORT_JSON="$GITHUB_WORKSPACE/patch-report.json" make build-app DMG=/tmp/codex-upstream-ci/Codex.dmg
 
+      - name: Record upstream app version
+        id: app-version
+        run: |
+          set -euo pipefail
+
+          node <<'NODE'
+          const fs = require("node:fs");
+          const metadataPath = "upstream-dmg-metadata.json";
+          const buildInfoPath = "codex-app/resources/codex-linux-build-info.json";
+          const metadata = JSON.parse(fs.readFileSync(metadataPath, "utf8"));
+          const buildInfo = JSON.parse(fs.readFileSync(buildInfoPath, "utf8"));
+          const version = buildInfo?.upstreamDmg?.appVersion;
+          if (typeof version !== "string" || !/^[0-9]+[.][0-9]+[.][0-9]+$/.test(version)) {
+            throw new Error(`Unable to read upstream app version from ${buildInfoPath}`);
+          }
+          metadata.upstream_app_version = version;
+          fs.writeFileSync(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`);
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `upstream_app_version=${version}\n`);
+          NODE
+
       - name: Validate required upstream patches
         run: node scripts/ci/validate-patch-report.js patch-report.json --profile upstream-build
 
-      - name: Upload upstream DMG metadata artifact
+      - name: Stage candidate metadata artifacts
+        id: candidate
+        run: |
+          set -euo pipefail
+          rm -rf upstream-candidate-artifacts
+          mkdir -p upstream-candidate-artifacts
+          node scripts/ci/write-upstream-candidate-report.js \
+            --metadata upstream-dmg-metadata.json \
+            --patch-report patch-report.json \
+            --metadata-out upstream-candidate-artifacts/upstream-dmg-metadata.json \
+            --patch-report-out upstream-candidate-artifacts/patch-report.json \
+            --candidate upstream-candidate-artifacts/upstream-dmg-candidate.json \
+            --issue-body upstream-candidate-artifacts/upstream-dmg-candidate-issue.md \
+            --summary upstream-candidate-artifacts/upstream-dmg-candidate-summary.md \
+            --private-path "$GITHUB_WORKSPACE" \
+            --private-path "$RUNNER_TEMP" \
+            --private-path "$UPSTREAM_DMG_PATH" \
+            --github-output "$GITHUB_OUTPUT"
+          node scripts/ci/validate-no-payload-artifacts.js \
+            --private-path "$GITHUB_WORKSPACE" \
+            --private-path "$RUNNER_TEMP" \
+            --private-path "$UPSTREAM_DMG_PATH" \
+            upstream-candidate-artifacts
+
+      - name: Upload upstream DMG candidate metadata artifact
         uses: actions/upload-artifact@v4
         with:
-          name: upstream-dmg-metadata
-          path: |
-            upstream-dmg-metadata.json
-            patch-report.json
+          name: upstream-dmg-candidate-metadata
+          path: upstream-candidate-artifacts/
+          if-no-files-found: error
+
+      - name: Open or update candidate promotion issue
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_TITLE: ${{ steps.candidate.outputs.issue_title }}
+          ISSUE_BODY: upstream-candidate-artifacts/upstream-dmg-candidate-issue.md
+        run: |
+          set -euo pipefail
+
+          issues_json="$(mktemp)"
+          trap 'rm -f "$issues_json"' EXIT
+          gh issue list \
+            --repo "$GITHUB_REPOSITORY" \
+            --state open \
+            --search "$ISSUE_TITLE in:title" \
+            --json title,url > "$issues_json"
+
+          issue_url="$(node -e '
+          const fs = require("node:fs");
+          const issues = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+          const title = process.env.ISSUE_TITLE;
+          const match = issues.find((issue) => issue.title === title);
+          if (match) process.stdout.write(match.url);
+          ' "$issues_json")"
+
+          if [ -n "$issue_url" ]; then
+            gh issue edit "$issue_url" --body-file "$ISSUE_BODY"
+            echo "- Candidate promotion issue updated: $issue_url" >> "$GITHUB_STEP_SUMMARY"
+          else
+            issue_url="$(gh issue create \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "$ISSUE_TITLE" \
+              --body-file "$ISSUE_BODY")"
+            echo "- Candidate promotion issue created: $issue_url" >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Write build summary
         run: |
@@ -151,6 +235,7 @@ jobs:
             echo "## Upstream Build App"
             echo ""
             echo "- DMG URL: \`$UPSTREAM_DMG_URL\`"
+            echo "- Upstream App Version: \`${{ steps.app-version.outputs.upstream_app_version }}\`"
             echo "- DMG Last-Modified: \`${{ steps.upstream-metadata.outputs.last_modified }}\`"
             echo "- DMG ETag: \`${{ steps.upstream-metadata.outputs.etag }}\`"
             echo "- DMG Content-Length: \`${{ steps.upstream-metadata.outputs.content_length }}\`"
@@ -158,6 +243,9 @@ jobs:
             echo "- DMG Size (bytes): \`${{ steps.local-dmg.outputs.size_bytes }}\`"
             echo "- Tested At (UTC): \`${{ steps.local-dmg.outputs.tested_at_utc }}\`"
             echo "- Cache Hit: \`${{ steps.dmg-cache.outputs.cache-hit || 'false' }}\`"
-            echo "- Build command: \`make build-app DMG=/tmp/codex-upstream-ci/Codex.dmg\`"
+            echo "- Build command: \`make build-app DMG=<local upstream DMG>\`"
             echo "- Patch report: \`patch-report.json\`"
+            echo "- Candidate artifact: \`upstream-dmg-candidate-metadata\`"
+            echo "- Candidate promotion record: \`${{ steps.candidate.outputs.issue_title }}\`"
+            echo "- Artifact boundary: metadata and reports only; no DMG, extracted app, or package payload."
           } >> "$GITHUB_STEP_SUMMARY"

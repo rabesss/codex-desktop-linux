@@ -18,6 +18,7 @@ mod state;
 #[cfg(test)]
 mod test_util;
 mod upstream;
+mod upstream_lock;
 mod wrapper;
 mod wrapper_apply;
 

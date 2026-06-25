@@ -1,17 +1,30 @@
 # Build And Packaging
 
+This repository builds Linux artifacts locally from the official upstream Codex
+Desktop app. It does not publish or redistribute OpenAI application payloads.
+
+The build system has two release concerns:
+
+- the upstream app pin, which identifies the approved official DMG metadata and
+  hash;
+- the Linux wrapper revision, which provides the patcher, launcher, package
+  builders, updater, feature framework, and docs used to rebuild the local
+  package.
+
 ## Prerequisites
 
 You need:
 
-- `python3`, `7z` or `7zz`, `curl`, `unzip`, `make`, `g++`
-- Rust toolchain with `cargo` for `codex-update-manager`,
-  `codex-computer-use-linux`, and the Chrome extension host binary
+- `python3`, `7z` or `7zz`, `curl`, `unzip`, `make`, and `g++`;
+- a Rust toolchain with `cargo` for `codex-update-manager`,
+  `codex-computer-use-linux`, and the Chrome-compatible native messaging host;
+- a user account that can authorize package installation when installing a
+  native package.
 
 The installer downloads a managed Linux Node.js runtime into
 `codex-app/resources/node-runtime` and uses it for `node`, `npm`, and `npx`
-during the build. Existing `nvm`, asdf, Volta, NodeSource, or nodejs.org
-installs are fine, but no longer required for this project.
+during the build. A system Node.js install is not required for the normal
+installer path.
 
 Bootstrap dependencies:
 
@@ -70,59 +83,34 @@ Equivalent direct commands:
 ./install.sh --fresh
 ```
 
-Run the generated app:
+The generated `codex-app/` tree contains the locally converted app, Linux
+Electron runtime, rebuilt native modules, launcher, patch metadata, managed
+runtime resources, bundled Linux integration, and enabled optional features.
+Treat it as build output.
+
+Run the generated app without installing a native package:
 
 ```bash
 make run-app
 ./codex-app/start.sh
 ```
 
-## Running The Generated App
+## Build Pipeline
 
-By default, second launches reuse the running app through the Linux warm-start
-handoff.
-
-Open an independent app process:
-
-```bash
-./codex-app/start.sh --new-instance
+```text
+official Codex.dmg or approved local pin
+  -> extraction with 7z/7zz
+  -> app.asar patch descriptors
+  -> optional linux-features descriptors and resources
+  -> native Node module rebuild
+  -> matching Linux Electron runtime
+  -> generated launcher and webview server
+  -> codex-app/
+  -> native package or AppImage
 ```
 
-Configure the port range or make every launch use multi-instance mode:
-
-```bash
-CODEX_MULTI_LAUNCH_PORT_RANGE=5175-5199 ./codex-app/start.sh --new-instance
-CODEX_MULTI_LAUNCH=1 CODEX_MULTI_LAUNCH_PORT_RANGE=5175-5199 ./codex-app/start.sh
-```
-
-## Off-Screen Agent-Browser QA
-
-For UI QA on a workstation you are actively using, run Codex Desktop inside an
-isolated Xvfb display and connect `agent-browser` to Electron's Chrome DevTools
-Protocol port. This avoids focusing the visible Hyprland/X11 session while
-still exercising the real Electron app shell.
-
-```bash
-xvfb-run -a -s "-screen 0 1280x900x24" \
-  env CODEX_WEBVIEW_PORT=5185 CODEX_MULTI_LAUNCH_PORT_RANGE=5185-5189 \
-  /opt/codex-desktop/start.sh --new-instance --x11 -- \
-  --remote-debugging-port=9334 \
-  --remote-debugging-address=127.0.0.1
-```
-
-In another shell:
-
-```bash
-AGENT_BROWSER_SESSION=codex-desktop-electron-qa agent-browser connect 9334
-AGENT_BROWSER_SESSION=codex-desktop-electron-qa agent-browser snapshot -i
-```
-
-Use a fresh `CODEX_WEBVIEW_PORT` and CDP port for each independent QA run.
-Do not add `--disable-gpu`; current Electron builds can refuse GPU access and
-never expose the debugging target when GPU and software rasterization are both
-disabled. Also avoid treating `http://127.0.0.1:<CODEX_WEBVIEW_PORT>` as a
-complete substitute for Electron QA: that page can load, but it lacks the
-host/preload APIs used by the installed app.
+The package builders repackage an already generated `codex-app/`. They do not
+download or extract the DMG themselves.
 
 ## Package Formats
 
@@ -143,8 +131,48 @@ Override package version:
 PACKAGE_VERSION=2026.03.24.220723+88f07cd3 make deb
 ```
 
-The packaging scripts only repackage what is already in `codex-app/`; they do
-not download or extract the DMG.
+## Native Packages And Update Builder
+
+Default native packages install:
+
+- the converted app under the system package root;
+- the `codex-desktop` launcher;
+- desktop entry, icon, URL/MIME integration, and installed-state doctor;
+- `codex-update-manager`;
+- a systemd user service for update checks;
+- a Polkit policy for constrained package install and rollback commands;
+- `/opt/codex-desktop/update-builder`, a frozen copy of the wrapper machinery
+  needed for local update rebuilds.
+
+The update builder must contain enough wrapper metadata to know which revision
+produced the installed package. It should not rely on a live `.git` checkout.
+
+Build without the resident updater:
+
+```bash
+PACKAGE_WITH_UPDATER=0 make package
+make install
+```
+
+That mode omits the updater service, Polkit policy, desktop update actions, and
+update-builder bundle. Users then update from a trusted checkout manually.
+
+## Governed Upstream Pins
+
+For a governed release, the upstream app pin should be recorded as metadata and
+hashes only. The native package build may consume the approved DMG locally, but
+public releases and CI artifacts must not upload the DMG, extracted app, or
+rebuilt package payload containing OpenAI application code.
+
+When validating a new upstream DMG:
+
+```bash
+make inspect-upstream DMG=/path/to/Codex.dmg
+```
+
+Inspection writes rebuild and patch reports without replacing `codex-app/`.
+Promotion of a candidate app pin is a Git review step, not an automatic result
+of "latest DMG exists."
 
 ## Custom-Model Package Profile
 
@@ -164,26 +192,28 @@ CODEX_LINUX_FEATURES_CONFIG=profiles/custom-models/features.json make install-na
 It downloads the official upstream app locally, applies the Linux/custom-model
 patches, builds the host distro package, and installs it. The profile enables:
 
-- `open-target-discovery`
-- `codex-wrapper-updater`
-- `custom-model-catalog`
+- `open-target-discovery`;
+- `codex-wrapper-updater`;
+- `custom-model-catalog`.
 
-It does not enable `brave-origin-browser-control`; browser target overrides are
-local policy choices and should not be part of the public default package.
+It does not make any custom provider the global Codex default. Official
+Codex/OpenAI routing should stay direct. Custom rows route only when the user
+selects a row whose catalog metadata and provider config define that route.
 
-To build a distributable native package without installing it:
+To build a native package without installing it:
 
 ```bash
 make package-custom-models
 ```
 
-The generated artifact lands under `dist/` in the same `.deb`, `.rpm`, or
-`.pkg.tar.*` format selected by the host. You can override the feature manifest
-for a downstream package with:
+The generated artifact lands under `dist/` in the package format selected by
+the host. Override the feature manifest for a downstream package with:
 
 ```bash
 CUSTOM_MODELS_FEATURES_CONFIG=/path/to/features.json make package-custom-models
 ```
+
+Do not store provider secrets in feature profiles or catalog metadata.
 
 ## AppImage Local Self-Build
 
@@ -194,9 +224,9 @@ make appimage
 ```
 
 The AppImage flow does not include `codex-update-manager`, the systemd user
-service, polkit policy, or the native-package update builder.
+service, Polkit policy, or the native-package update builder.
 
-When upstream Codex Desktop changes:
+When upstream Codex Desktop changes, rebuild locally:
 
 ```bash
 git pull --ff-only
@@ -209,6 +239,43 @@ AppImage builds require `appimagetool` on `PATH`, or:
 ```bash
 APPIMAGETOOL=/path/to/appimagetool make appimage
 ```
+
+## Running The Generated App
+
+By default, second launches reuse the running app through the Linux warm-start
+handoff.
+
+Open an independent app process:
+
+```bash
+./codex-app/start.sh --new-instance
+```
+
+Configure the port range or make every launch use multi-instance mode:
+
+```bash
+CODEX_MULTI_LAUNCH_PORT_RANGE=5175-5199 ./codex-app/start.sh --new-instance
+CODEX_MULTI_LAUNCH=1 CODEX_MULTI_LAUNCH_PORT_RANGE=5175-5199 ./codex-app/start.sh
+```
+
+## Off-Screen Browser QA
+
+For UI QA on an active desktop session, run Codex Desktop inside an isolated
+Xvfb display and connect an Electron-capable browser automation tool to the
+Chrome DevTools Protocol port. This avoids focusing the visible session while
+still exercising the real Electron shell.
+
+```bash
+xvfb-run -a -s "-screen 0 1280x900x24" \
+  env CODEX_WEBVIEW_PORT=5185 CODEX_MULTI_LAUNCH_PORT_RANGE=5185-5189 \
+  /opt/codex-desktop/start.sh --new-instance --x11 -- \
+  --remote-debugging-port=9334 \
+  --remote-debugging-address=127.0.0.1
+```
+
+Use a fresh webview port and CDP port for each independent QA run. Do not treat
+the bare webview URL as a complete substitute for Electron QA because that page
+lacks the host/preload APIs used by the installed app.
 
 ## Electron Mirrors
 
@@ -269,3 +336,16 @@ make service-status
 make clean-dist
 make clean-state
 ```
+
+## Validation
+
+For documentation-only changes, run:
+
+```bash
+git diff --check
+scripts/workstation/verify-policy.sh
+```
+
+For installer, launcher, package, patcher, updater, or feature changes, run the
+focused checks listed in [Architecture](architecture.md#validation) and the
+repository `AGENTS.md`.

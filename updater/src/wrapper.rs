@@ -336,6 +336,25 @@ fn commit_is_ancestor(repo: &Path, ancestor: &str, descendant: &str) -> Option<b
     }
 }
 
+/// Returns whether `installed_commit` satisfies `required_minimum` when the
+/// local builder bundle has enough git metadata to answer ancestry questions.
+pub fn commit_satisfies_minimum(
+    repo: &Path,
+    installed_commit: &str,
+    required_minimum: &str,
+) -> Option<bool> {
+    if installed_commit == required_minimum
+        || installed_commit.starts_with(required_minimum)
+        || required_minimum.starts_with(installed_commit)
+    {
+        return Some(true);
+    }
+    if !is_git_checkout(repo) {
+        return None;
+    }
+    commit_is_ancestor(repo, required_minimum, installed_commit)
+}
+
 /// Reads `CHANGELOG.md` at a specific commit from the object store (the
 /// candidate's changelog, which reflects the new version's entries).
 fn changelog_at_commit(repo: &Path, commit: &str) -> Option<String> {
