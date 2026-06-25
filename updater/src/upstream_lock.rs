@@ -19,7 +19,7 @@ const OFFICIAL_DMG_URL: &str = "https://persistent.oaistatic.com/codex-app-prod/
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UpstreamDmgPolicy {
-    Approved(ApprovedUpstreamDmg),
+    Approved(Box<ApprovedUpstreamDmg>),
     Latest,
 }
 
@@ -81,7 +81,9 @@ pub fn policy_for_config(config: &RuntimeConfig) -> Result<UpstreamDmgPolicy> {
 
     let lock_path = lock_path(&config.builder_bundle_root);
     if lock_path.is_file() {
-        return Ok(UpstreamDmgPolicy::Approved(load_lock(&lock_path)?.approved));
+        return Ok(UpstreamDmgPolicy::Approved(Box::new(
+            load_lock(&lock_path)?.approved,
+        )));
     }
 
     if config.builder_bundle_root == Path::new(PACKAGED_BUILDER_ROOT) {
