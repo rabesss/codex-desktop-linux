@@ -1,22 +1,26 @@
 # Codex Desktop Linux
 
 Codex Desktop Linux is an unofficial Linux wrapper for OpenAI Codex Desktop.
-It is heavily inspired by
-[`ilysenko/codex-desktop-linux`](https://github.com/ilysenko/codex-desktop-linux):
-that project established the practical local-conversion model for turning the
-official Codex Desktop app into Linux packages. This fork keeps that local
-conversion approach and adds a governed two-channel update model, stricter
-release boundaries, optional custom-model routing, and package-focused Linux
-maintenance.
+It builds a local Linux app from the official upstream Codex Desktop DMG, then
+packages that app for the user's machine.
 
-The project does not redistribute OpenAI application binaries. The upstream
-Codex Desktop DMG is downloaded or provided by the user during local build and
-update flows. Public CI and release automation should publish metadata, hashes,
-patch reports, logs, and review records only.
+This repository does not publish ready-made app packages and does not
+redistribute OpenAI application binaries. The upstream Codex Desktop DMG is
+downloaded or provided by the user during local build and update flows. Public
+CI publishes validation evidence only: metadata, hashes, patch reports, logs,
+and review records.
 
-## Quick Start
+## Start Here
 
-For most users:
+| Need | Use |
+|---|---|
+| First install on this machine | `make install-guided` |
+| Build from a DMG you already downloaded | `make build-app DMG=/path/to/Codex.dmg && make package && make install` |
+| Check what upstream app version and package paths are supported | [SUPPORTED.md](SUPPORTED.md) |
+| Check the installed app | `codex-desktop-doctor` or `codex-desktop-doctor --json` |
+| See current CI validation state | The live badges and workflow links in [SUPPORTED.md](SUPPORTED.md) |
+
+The normal first install is:
 
 ```bash
 git clone https://github.com/rabesss/codex-linux.git
@@ -29,26 +33,52 @@ Codex Desktop app locally, applies the Linux wrapper patches, builds a native
 package for the current distribution, and installs it with explicit system
 authorization.
 
-Launch the installed app from the desktop menu or run:
+Supported package-builder paths include Debian/Ubuntu `.deb`,
+Fedora/openSUSE `.rpm`, Arch-family pacman packages, Nix package outputs, and
+local AppImage self-builds. CI validates those builders, but CI fixture
+packages are not release packages for users.
+
+## Use The App
+
+Launch from the desktop menu or run:
 
 ```bash
 codex-desktop
 ```
 
-Check installed readiness:
+Check readiness:
 
 ```bash
 codex-desktop-doctor
 codex-desktop-doctor --json
 ```
 
-Before installing or reporting a compatibility issue, check
-[supported versions and validation](SUPPORTED.md). That file is generated from
-the approved upstream DMG lock and checked by CI so users can see which upstream
-app version, package-builder paths, and validation workflows are currently
-supported.
+Check updater state:
+
+```bash
+codex-update-manager status
+codex-update-manager status --json
+```
+
+When an approved upstream app update exists, the updater rebuilds a local native
+package from the approved DMG pin. If OpenAI publishes a newer DMG before this
+repo approves it, the updater may report a candidate, but the default update
+path should not install that unapproved candidate.
+
+Before installing or reporting a compatibility issue, check [supported versions
+and validation](SUPPORTED.md). That generated file is CI-checked on every push
+and pull request. Historical failed workflow runs can remain visible in GitHub
+after a follow-up commit fixes them, so use the current `main` badges and the
+latest workflow runs when judging support status.
 
 ## What This Fork Adds
+
+This project is heavily inspired by
+[`ilysenko/codex-desktop-linux`](https://github.com/ilysenko/codex-desktop-linux):
+that project established the practical local-conversion model for turning the
+official Codex Desktop app into Linux packages. This fork keeps that model and
+adds governed upstream-app promotion, stricter release boundaries, optional
+custom-model routing, and package-focused Linux maintenance.
 
 This repository is not a binary mirror of Codex Desktop and is not a blind
 "latest DMG" updater. It keeps two update streams separate:
