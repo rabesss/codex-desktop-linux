@@ -90,6 +90,13 @@ main() {
     parse_args "$@"
     normalize_linux_features_config_path
     validate_app_identity
+
+    local provided_dmg_realpath=""
+    if [ -n "$PROVIDED_DMG_PATH" ]; then
+        [ -f "$PROVIDED_DMG_PATH" ] || error "Provided DMG not found: $PROVIDED_DMG_PATH"
+        provided_dmg_realpath="$(realpath "$PROVIDED_DMG_PATH")"
+    fi
+
     check_deps
     if [ "$INSPECT_ONLY" -ne 1 ]; then
         assert_install_target_not_running
@@ -101,9 +108,8 @@ main() {
     fi
 
     local dmg_path=""
-    if [ -n "$PROVIDED_DMG_PATH" ]; then
-        [ -f "$PROVIDED_DMG_PATH" ] || error "Provided DMG not found: $PROVIDED_DMG_PATH"
-        dmg_path="$(realpath "$PROVIDED_DMG_PATH")"
+    if [ -n "$provided_dmg_realpath" ]; then
+        dmg_path="$provided_dmg_realpath"
         info "Using provided DMG: $dmg_path"
     else
         dmg_path=$(get_dmg)

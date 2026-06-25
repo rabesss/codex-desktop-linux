@@ -496,7 +496,9 @@ installed_package_version() {
 }
 
 updater_install_summary() {
-    if [ -x /usr/bin/codex-update-manager ] || [ -d "/opt/$PACKAGE_NAME/update-builder" ]; then
+    if [ -d "/opt/$PACKAGE_NAME/update-builder" ]; then
+        printf 'updater artifacts detected'
+    elif [ "$PACKAGE_NAME" = "codex-desktop" ] && [ -x /usr/bin/codex-update-manager ]; then
         printf 'updater artifacts detected'
     else
         printf 'not detected'

@@ -1098,6 +1098,8 @@ test_missing_input_failure() {
     local bin_dir="$workspace/bin"
     local rpm_app_dir="$workspace/rpm-app"
     local rpm_log="$workspace/rpm-missing-runtime.log"
+    local install_log="$workspace/install-missing-dmg.log"
+    local install_dir="$workspace/codex-app"
 
     mkdir -p "$workspace"
     make_stub_bin_dir "$bin_dir"
@@ -1120,6 +1122,12 @@ SCRIPT
         fail "build-rpm.sh should fail when PACKAGED_RUNTIME_SOURCE is missing"
     fi
     assert_contains "$rpm_log" "Missing packaged launcher runtime helper"
+
+    if CODEX_INSTALL_DIR="$install_dir" "$REPO_DIR/install.sh" "$workspace/does-not-exist.dmg" >"$install_log" 2>&1; then
+        fail "install.sh should fail when an explicit DMG path is missing"
+    fi
+    assert_contains "$install_log" "Provided DMG not found: $workspace/does-not-exist.dmg"
+    assert_file_not_exists "$install_dir"
 }
 
 test_make_install_reports_missing_native_packages() {
@@ -1513,8 +1521,53 @@ SCRIPT
         bash "$REPO_DIR/scripts/bootstrap-wizard.sh" >"$output_log"
 
     assert_contains "$output_log" "Installed package: deb 1.2.3"
+    assert_contains "$output_log" "Installed updater mode: not detected"
     assert_contains "$output_log" "ydotoold.service(system)="
     assert_contains "$output_log" "ydotoold.service(user)="
+    assert_contains "$dpkg_args" "codex-cua-lab"
+    assert_not_contains "$dpkg_args" "codex-desktop"
+}
+
+test_setup_native_make_target_preserves_package_name_override() {
+    info "Checking setup-native make target preserves package name override"
+    local workspace="$TMP_DIR/setup-native-make-package-name"
+    local features_root="$workspace/linux-features"
+    local config="$workspace/features.json"
+    local output_log="$workspace/output.log"
+    local bin_dir="$workspace/bin"
+    local dpkg_args="$workspace/dpkg-query.args"
+
+    make_wizard_feature_root "$features_root"
+    printf '%s\n' '{"enabled":[]}' > "$config"
+    mkdir -p "$bin_dir"
+    cat > "$bin_dir/dpkg-query" <<SCRIPT
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$dpkg_args"
+if [[ "\$*" != *codex-cua-lab* ]]; then
+    exit 1
+fi
+case "\$*" in
+    *"deb "*)
+        printf 'deb 9.8.7'
+        exit 0
+        ;;
+    *)
+        printf '9.8.7'
+        exit 0
+        ;;
+esac
+SCRIPT
+    chmod +x "$bin_dir/dpkg-query"
+
+    PATH="$bin_dir:$PATH" \
+    PACKAGE_NAME="codex-cua-lab" \
+    CODEX_BOOTSTRAP_NONINTERACTIVE=1 \
+    CODEX_LINUX_FEATURES_ROOT="$features_root" \
+    CODEX_LINUX_FEATURES_CONFIG="$config" \
+        make -C "$REPO_DIR" setup-native >"$output_log"
+
+    assert_contains "$output_log" "Installed package: deb 9.8.7"
+    assert_contains "$output_log" "Installed updater mode: not detected"
     assert_contains "$dpkg_args" "codex-cua-lab"
     assert_not_contains "$dpkg_args" "codex-desktop"
 }
