@@ -1,6 +1,7 @@
 use crate::windowing::backends::{cosmic, gnome, hyprland, i3, kwin, sway};
 use crate::windowing::types::WindowInfo;
 use anyhow::{anyhow, Result};
+use std::env;
 
 pub use cosmic::COSMIC_WAYLAND_BACKEND;
 pub use gnome::{GNOME_SHELL_EXTENSION_BACKEND, GNOME_SHELL_INTROSPECT_BACKEND};
@@ -30,7 +31,7 @@ pub struct BackendProbe {
     pub detail: String,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BackendKind {
     GnomeExtension,
     GnomeIntrospect,
@@ -127,9 +128,9 @@ pub fn backend_can_exact_focus(id: &str) -> bool {
 
 pub async fn list_windows() -> Result<Vec<WindowInfo>> {
     let mut errors = Vec::new();
-    for backend in BACKEND_ORDER {
+    for backend in active_backend_order() {
         if let Some(windows) =
-            usable_backend_windows(*backend, list_windows_for(*backend).await, &mut errors)
+            usable_backend_windows(backend, list_windows_for(backend).await, &mut errors)
         {
             return Ok(windows);
         }
@@ -195,25 +196,242 @@ pub async fn activate_window(window: &WindowInfo) -> Result<()> {
 }
 
 pub fn focused_window_override() -> Option<WindowInfo> {
-    cosmic::focused_window()
-        .ok()
-        .flatten()
-        .or_else(|| hyprland::focused_window().ok().flatten())
+    active_backend_order()
+        .into_iter()
+        .find_map(|backend| match backend {
+            BackendKind::Cosmic => cosmic::focused_window().ok().flatten(),
+            BackendKind::Hyprland => hyprland::focused_window().ok().flatten(),
+            _ => None,
+        })
 }
 
 pub fn probe_backends() -> Vec<BackendProbe> {
-    vec![
-        gnome::probe_extension(),
-        gnome::probe_introspect(),
-        kwin::probe(),
-        sway::probe(),
-        hyprland::probe(),
-        cosmic::probe(),
-        i3::probe(),
-    ]
+    let active = active_backend_order();
+    BACKEND_ORDER
+        .iter()
+        .map(|backend| {
+            if active.contains(backend) {
+                probe_backend(*backend)
+            } else {
+                skipped_backend_probe(*backend)
+            }
+        })
+        .collect()
+}
+
+fn probe_backend(backend: BackendKind) -> BackendProbe {
+    match backend {
+        BackendKind::GnomeExtension => gnome::probe_extension(),
+        BackendKind::GnomeIntrospect => gnome::probe_introspect(),
+        BackendKind::Cosmic => cosmic::probe(),
+        BackendKind::Kwin => kwin::probe(),
+        BackendKind::Sway => sway::probe(),
+        BackendKind::Hyprland => hyprland::probe(),
+        BackendKind::I3 => i3::probe(),
+    }
+}
+
+fn skipped_backend_probe(backend: BackendKind) -> BackendProbe {
+    BackendProbe {
+        id: backend.id(),
+        ok: false,
+        can_list_windows: false,
+        can_focus_apps: false,
+        can_focus_windows: false,
+        detail: format!(
+            "skipped: current desktop session does not match {}",
+            backend.failure_label()
+        ),
+    }
+}
+
+fn active_backend_order() -> Vec<BackendKind> {
+    backend_order_for_session(&BackendSession::current())
+}
+
+fn backend_order_for_session(session: &BackendSession) -> Vec<BackendKind> {
+    if session.probe_all {
+        return BACKEND_ORDER.to_vec();
+    }
+    if let Some(forced) = &session.forced_backends {
+        if !forced.is_empty() {
+            return forced.clone();
+        }
+    }
+
+    let mut backends = Vec::new();
+    if session.is_gnome() {
+        push_unique(&mut backends, BackendKind::GnomeExtension);
+        push_unique(&mut backends, BackendKind::GnomeIntrospect);
+    }
+    if session.is_kwin() {
+        push_unique(&mut backends, BackendKind::Kwin);
+    }
+    if session.is_sway() {
+        push_unique(&mut backends, BackendKind::Sway);
+    }
+    if session.is_hyprland() {
+        push_unique(&mut backends, BackendKind::Hyprland);
+    }
+    if session.is_cosmic() {
+        push_unique(&mut backends, BackendKind::Cosmic);
+    }
+    if session.is_i3() {
+        push_unique(&mut backends, BackendKind::I3);
+    }
+
+    if backends.is_empty() {
+        BACKEND_ORDER.to_vec()
+    } else {
+        backends
+    }
+}
+
+fn push_unique(backends: &mut Vec<BackendKind>, backend: BackendKind) {
+    if !backends.contains(&backend) {
+        backends.push(backend);
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct BackendSession {
+    desktop: String,
+    session_type: Option<String>,
+    has_display: bool,
+    has_wayland_display: bool,
+    has_hyprland_instance: bool,
+    swaysock: Option<String>,
+    i3sock: Option<String>,
+    probe_all: bool,
+    forced_backends: Option<Vec<BackendKind>>,
+}
+
+impl BackendSession {
+    fn current() -> Self {
+        let desktop = [
+            "XDG_CURRENT_DESKTOP",
+            "XDG_SESSION_DESKTOP",
+            "DESKTOP_SESSION",
+        ]
+        .into_iter()
+        .filter_map(env_var)
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_ascii_lowercase();
+
+        Self {
+            desktop,
+            session_type: env_var("XDG_SESSION_TYPE").map(|value| value.to_ascii_lowercase()),
+            has_display: env_var("DISPLAY").is_some(),
+            has_wayland_display: env_var("WAYLAND_DISPLAY").is_some(),
+            has_hyprland_instance: env_var("HYPRLAND_INSTANCE_SIGNATURE").is_some(),
+            swaysock: env_var("SWAYSOCK"),
+            i3sock: env_var("I3SOCK"),
+            probe_all: env_flag("CODEX_COMPUTER_USE_PROBE_ALL_BACKENDS"),
+            forced_backends: forced_backend_order(),
+        }
+    }
+
+    fn desktop_contains(&self, needle: &str) -> bool {
+        self.desktop.contains(needle)
+    }
+
+    fn is_gnome(&self) -> bool {
+        self.desktop_contains("gnome")
+    }
+
+    fn is_kwin(&self) -> bool {
+        self.desktop_contains("kde")
+            || self.desktop_contains("plasma")
+            || self.desktop_contains("kwin")
+    }
+
+    fn is_sway(&self) -> bool {
+        self.desktop_contains("sway")
+            || self.swaysock.is_some()
+            || self
+                .i3sock
+                .as_deref()
+                .is_some_and(path_looks_like_sway_socket)
+    }
+
+    fn is_hyprland(&self) -> bool {
+        self.desktop_contains("hyprland") || self.has_hyprland_instance
+    }
+
+    fn is_cosmic(&self) -> bool {
+        self.desktop_contains("cosmic")
+    }
+
+    fn is_i3(&self) -> bool {
+        if self.desktop_contains("i3") {
+            return true;
+        }
+        if self.is_known_non_i3_desktop() {
+            return false;
+        }
+        if self.i3sock.is_some() && !self.is_sway() {
+            return true;
+        }
+
+        self.session_type
+            .as_deref()
+            .is_some_and(|session_type| session_type == "x11")
+            && self.has_display
+            && !self.has_wayland_display
+    }
+
+    fn is_known_non_i3_desktop(&self) -> bool {
+        self.is_gnome()
+            || self.is_kwin()
+            || self.is_sway()
+            || self.is_hyprland()
+            || self.is_cosmic()
+    }
+}
+
+fn forced_backend_order() -> Option<Vec<BackendKind>> {
+    let value = env_var("CODEX_COMPUTER_USE_WINDOW_BACKENDS")?;
+    let backends = value
+        .split(',')
+        .filter_map(|item| BackendKind::from_id(item.trim()))
+        .collect::<Vec<_>>();
+    Some(backends)
+}
+
+fn env_flag(name: &str) -> bool {
+    env_var(name).is_some_and(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on"))
+}
+
+fn env_var(name: &str) -> Option<String> {
+    env::var(name)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn path_looks_like_sway_socket(path: &str) -> bool {
+    std::path::Path::new(path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.starts_with("sway-ipc.") && name.ends_with(".sock"))
 }
 
 impl BackendKind {
+    fn from_id(id: &str) -> Option<Self> {
+        let id = id.trim().to_ascii_lowercase();
+        match id.as_str() {
+            "gnome" | "gnome-shell" | "gnome-shell-extension" => Some(Self::GnomeExtension),
+            "gnome-shell-introspect" | "gnome-introspect" => Some(Self::GnomeIntrospect),
+            "cosmic" | "cosmic-wayland" => Some(Self::Cosmic),
+            "kde" | "plasma" | "kwin" => Some(Self::Kwin),
+            "sway" | "sway-ipc" => Some(Self::Sway),
+            "hyprland" => Some(Self::Hyprland),
+            "i3" => Some(Self::I3),
+            _ => None,
+        }
+    }
+
     fn id(self) -> &'static str {
         match self {
             BackendKind::GnomeExtension => GNOME_SHELL_EXTENSION_BACKEND,
@@ -259,6 +477,125 @@ mod tests {
             backend: backend.to_string(),
             terminal: None,
         }
+    }
+
+    fn ids(backends: Vec<BackendKind>) -> Vec<&'static str> {
+        backends.into_iter().map(BackendKind::id).collect()
+    }
+
+    fn session(desktop: &str) -> BackendSession {
+        BackendSession {
+            desktop: desktop.to_ascii_lowercase(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn session_backend_order_prefers_hyprland_only_on_hyprland() {
+        let mut session = session("Hyprland");
+        session.has_wayland_display = true;
+
+        assert_eq!(
+            ids(backend_order_for_session(&session)),
+            vec![HYPRLAND_BACKEND]
+        );
+    }
+
+    #[test]
+    fn session_backend_order_prefers_gnome_pair_on_gnome() {
+        let session = session("GNOME");
+
+        assert_eq!(
+            ids(backend_order_for_session(&session)),
+            vec![
+                GNOME_SHELL_EXTENSION_BACKEND,
+                GNOME_SHELL_INTROSPECT_BACKEND
+            ]
+        );
+    }
+
+    #[test]
+    fn session_backend_order_prefers_kwin_on_plasma() {
+        let session = session("KDE Plasma");
+
+        assert_eq!(ids(backend_order_for_session(&session)), vec![KWIN_BACKEND]);
+    }
+
+    #[test]
+    fn session_backend_order_prefers_sway_for_sway_socket() {
+        let mut session = session("");
+        session.swaysock = Some("/run/user/1000/sway-ipc.1000.42.sock".to_string());
+
+        assert_eq!(ids(backend_order_for_session(&session)), vec![SWAY_BACKEND]);
+    }
+
+    #[test]
+    fn session_backend_order_treats_i3sock_as_sway_only_for_sway_socket_names() {
+        let mut sway_session = session("");
+        sway_session.i3sock = Some("/run/user/1000/sway-ipc.1000.42.sock".to_string());
+        let mut i3_session = session("");
+        i3_session.i3sock = Some("/run/user/1000/i3/ipc-socket.42".to_string());
+
+        assert_eq!(
+            ids(backend_order_for_session(&sway_session)),
+            vec![SWAY_BACKEND]
+        );
+        assert_eq!(
+            ids(backend_order_for_session(&i3_session)),
+            vec![I3_BACKEND]
+        );
+    }
+
+    #[test]
+    fn session_backend_order_ignores_stale_i3sock_on_known_non_i3_desktops() {
+        let mut session = session("KDE Plasma");
+        session.i3sock = Some("/run/user/1000/i3/ipc-socket.42".to_string());
+
+        assert_eq!(ids(backend_order_for_session(&session)), vec![KWIN_BACKEND]);
+    }
+
+    #[test]
+    fn session_backend_order_prefers_i3_for_unknown_x11_session() {
+        let mut session = session("");
+        session.session_type = Some("x11".to_string());
+        session.has_display = true;
+
+        assert_eq!(ids(backend_order_for_session(&session)), vec![I3_BACKEND]);
+    }
+
+    #[test]
+    fn session_backend_order_falls_back_to_all_backends_when_unknown() {
+        let session = session("niri");
+
+        assert_eq!(
+            ids(backend_order_for_session(&session)),
+            BACKEND_ORDER
+                .iter()
+                .map(|backend| backend.id())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn session_backend_order_honors_forced_backend_list() {
+        let mut session = session("Hyprland");
+        session.forced_backends = Some(vec![BackendKind::Kwin, BackendKind::Sway]);
+
+        assert_eq!(
+            ids(backend_order_for_session(&session)),
+            vec![KWIN_BACKEND, SWAY_BACKEND]
+        );
+    }
+
+    #[test]
+    fn skipped_backend_probe_is_non_capable_and_actionable() {
+        let probe = skipped_backend_probe(BackendKind::Kwin);
+
+        assert_eq!(probe.id, KWIN_BACKEND);
+        assert!(!probe.ok);
+        assert!(!probe.can_list_windows);
+        assert!(probe.detail.contains("skipped"));
+        assert!(probe.detail.contains("KWin"));
     }
 
     #[test]

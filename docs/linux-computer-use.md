@@ -98,6 +98,23 @@ sudo zypper install sway
 
 ## Backend Matrix
 
+The Computer Use binary ships the supported backend adapters together, but it
+does not probe every adapter on every launch. At runtime it builds an eligible
+window-backend list from the current desktop/session environment:
+
+- GNOME sessions probe the GNOME Shell extension and Introspect backends
+- KDE/Plasma sessions probe KWin
+- Sway sessions, `SWAYSOCK`, or Sway-shaped IPC sockets probe Sway IPC
+- Hyprland sessions or `HYPRLAND_INSTANCE_SIGNATURE` probe Hyprland
+- COSMIC sessions probe the bundled COSMIC helper
+- i3 sessions, i3-shaped `I3SOCK`, or unknown X11 sessions probe i3
+
+Unknown desktops fall back to the full backend list so new or unusual
+environments do not lose window targeting accidentally. For debugging, set
+`CODEX_COMPUTER_USE_PROBE_ALL_BACKENDS=1` to probe every backend, or set
+`CODEX_COMPUTER_USE_WINDOW_BACKENDS=hyprland,sway` with a comma-separated list
+of backend ids to force a specific order.
+
 | Desktop/compositor | Window list | Exact focus | Targeted screenshot path | Notes |
 | --- | --- | --- | --- | --- |
 | GNOME Shell extension | yes | yes | full screenshot, then verified crop | Run `setup_window_targeting` when GNOME Introspect cannot focus exact windows. |
