@@ -2025,6 +2025,67 @@ SCRIPT
     assert_contains "$launcher_path" '../codex-cli/node_modules/@openai/codex/bin/codex.js'
 }
 
+test_managed_codex_cli_install_retries_registry_fetches() {
+    info "Checking managed Codex CLI npm registry fetch retries"
+    local workspace="$TMP_DIR/managed-codex-cli-install"
+    local runtime_dir="$workspace/node-runtime"
+    local package_root="$workspace/codex-cli"
+    local launcher_path="$workspace/bin/codex"
+
+    mkdir -p "$runtime_dir/bin"
+    cat > "$runtime_dir/bin/node" <<'SCRIPT'
+#!/usr/bin/env bash
+case "${1:-}" in
+    */node_modules/@openai/codex/bin/codex.js)
+        if [ "${2:-}" = "--version" ]; then
+            echo "codex-cli 9.9.9"
+            exit 0
+        fi
+        exit 2
+        ;;
+    *)
+        exit 2
+        ;;
+esac
+SCRIPT
+    cat > "$runtime_dir/bin/npm" <<'SCRIPT'
+#!/usr/bin/env bash
+printf '%s\n' "$@" > "${NPM_ARG_LOG:?}"
+prefix=""
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --prefix)
+            shift
+            prefix="${1:-}"
+            ;;
+    esac
+    shift || true
+done
+[ -n "$prefix" ] || exit 2
+mkdir -p "$prefix/node_modules/@openai/codex/bin"
+printf '%s\n' 'throw new Error("fake codex.js should be executed by fake node");' \
+    > "$prefix/node_modules/@openai/codex/bin/codex.js"
+SCRIPT
+    chmod +x "$runtime_dir/bin/node" "$runtime_dir/bin/npm"
+
+    (
+        CODEX_MANAGED_NODE_RUNTIME_DIR="$runtime_dir"
+        export NPM_ARG_LOG="$workspace/npm-args.log"
+        info() { echo "[INFO] $*" >&2; }
+        error() { echo "[ERROR] $*" >&2; exit 1; }
+        source "$REPO_DIR/scripts/lib/codex-cli-runtime.sh"
+        ensure_managed_codex_cli "$package_root" "$launcher_path"
+        "$launcher_path" --version
+    ) > "$workspace/output.log" 2>&1
+
+    assert_file_exists "$launcher_path"
+    assert_contains "$workspace/output.log" "codex-cli 9.9.9"
+    assert_contains "$workspace/npm-args.log" "--fetch-retries=5"
+    assert_contains "$workspace/npm-args.log" "--fetch-retry-factor=2"
+    assert_contains "$workspace/npm-args.log" "--fetch-retry-mintimeout=10000"
+    assert_contains "$workspace/npm-args.log" "--fetch-retry-maxtimeout=120000"
+}
+
 test_better_sqlite3_electron_42_source_patch() {
     info "Checking better-sqlite3 Electron 42 source patch"
     local workspace="$TMP_DIR/better-sqlite3-electron-42"
@@ -5542,6 +5603,7 @@ main() {
     test_managed_node_runtime_source_install
     test_managed_node_runtime_rejects_version_only_stub
     test_managed_codex_cli_launcher
+    test_managed_codex_cli_install_retries_registry_fetches
     test_better_sqlite3_electron_42_source_patch
     test_v8_nullptr_workaround_skips_when_included_probe_succeeds
     test_v8_nullptr_workaround_wraps_when_included_probe_fails
