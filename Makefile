@@ -61,12 +61,14 @@ if [ -z "$$format" ]; then \
 fi; \
 printf '%s\n' "$$format"
 
-.PHONY: help check test build-updater maybe-build-updater update rebuild rebuild-install inspect-upstream build-app build-app-fresh setup-native install-guided bootstrap-native install-native install-custom-models package-custom-models update-native rebuild-next run-app build-dev-app run-dev-app deb rpm pacman appimage package install service-enable service-status clean-dist clean-state
+.PHONY: help check test supported check-supported build-updater maybe-build-updater update rebuild rebuild-install inspect-upstream build-app build-app-fresh setup-native install-guided bootstrap-native install-native install-custom-models package-custom-models update-native rebuild-next run-app build-dev-app run-dev-app deb rpm pacman appimage package install service-enable service-status clean-dist clean-state
 
 help:
 	@printf '\nCodex Desktop Control Make Targets\n\n'
 	@printf '  %-18s %s\n' "make check" "Run cargo check for codex-update-manager"
 	@printf '  %-18s %s\n' "make test" "Run updater test suite"
+	@printf '  %-18s %s\n' "make supported" "Regenerate SUPPORTED.md from the approved upstream DMG lock"
+	@printf '  %-18s %s\n' "make check-supported" "Validate SUPPORTED.md is current"
 	@printf '  %-18s %s\n' "make build-updater" "Build codex-update-manager in release mode"
 	@printf '  %-18s %s\n' "make update" "Find a DMG, rebuild, and replace codex-app/ with backup"
 	@printf '  %-18s %s\n' "make rebuild" "Inspect a DMG and build a side-by-side candidate"
@@ -145,6 +147,15 @@ check:
 test:
 	@echo "[make] Running cargo test"
 	cargo test $(CARGO_JOBS_ARG) -p codex-update-manager
+
+supported:
+	@echo "[make] Regenerating SUPPORTED.md"
+	node scripts/ci/render-supported-md.js --output SUPPORTED.md
+
+check-supported:
+	@echo "[make] Checking SUPPORTED.md"
+	node scripts/ci/validate-upstream-dmg-lock.js release/upstream-dmg-lock.json
+	node scripts/ci/render-supported-md.js --check --output SUPPORTED.md
 
 build-updater:
 	@echo "[make] Building codex-update-manager (release)"

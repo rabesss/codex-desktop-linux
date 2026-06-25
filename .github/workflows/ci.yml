@@ -45,7 +45,9 @@ jobs:
           for file in scripts/patches/*.js; do
             node --check "$file"
           done
-          node --check scripts/ci/validate-patch-report.js
+          for file in scripts/ci/*.js; do
+            node --check "$file"
+          done
 
       - name: Check Rust formatting
         run: cargo fmt --check
@@ -59,6 +61,13 @@ jobs:
       - name: Run Rust tests
         run: cargo test --workspace --all-targets
 
+      - name: Run CI metadata tests
+        run: |
+          set -euo pipefail
+          node --test scripts/ci/*.test.js
+          make check-supported
+          node scripts/ci/render-supported-md.js --check --summary-out "$GITHUB_STEP_SUMMARY"
+
       - name: Run script smoke tests
         run: |
           set -euo pipefail
@@ -68,7 +77,7 @@ jobs:
             echo ""
             echo "- Shell syntax checks passed."
             echo "- Rust formatting, clippy, check, and tests passed."
-            echo "- Script smoke tests passed."
+            echo "- CI metadata tests, generated support docs, and script smoke tests passed."
           } >> "$GITHUB_STEP_SUMMARY"
 
   package-deb:

@@ -42,6 +42,12 @@ codex-desktop-doctor
 codex-desktop-doctor --json
 ```
 
+Before installing or reporting a compatibility issue, check
+[supported versions and validation](SUPPORTED.md). That file is generated from
+the approved upstream DMG lock and checked by CI so users can see which upstream
+app version, package-builder paths, and validation workflows are currently
+supported.
+
 ## What This Fork Adds
 
 This repository is not a binary mirror of Codex Desktop and is not a blind
@@ -269,6 +275,7 @@ More detail is in [Build and packaging](docs/build-and-packaging.md),
 
 ## Project Docs
 
+- [Supported versions and validation](SUPPORTED.md)
 - [Architecture](docs/architecture.md)
 - [Build and packaging](docs/build-and-packaging.md)
 - [Updater](docs/updater.md)

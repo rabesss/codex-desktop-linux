@@ -46,6 +46,9 @@ jobs:
       - name: Refresh Nix upstream hash
         run: scripts/ci/update-nix-hashes.sh
 
+      - name: Refresh generated support docs
+        run: node scripts/ci/render-supported-md.js --output SUPPORTED.md
+
       - name: Open refreshed hashes pull request
         env:
           GH_TOKEN: ${{ github.token }}
@@ -53,7 +56,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          if git diff --quiet -- flake.nix nix/native-modules/package.json nix/native-modules/package-lock.json; then
+          if git diff --quiet -- flake.nix nix/native-modules/package.json nix/native-modules/package-lock.json SUPPORTED.md; then
             echo "Nix pins unchanged, nothing to do."
             exit 0
           fi
@@ -72,7 +75,7 @@ jobs:
           git config user.name  "codex-dmg-hash-bot"
           git config user.email "actions@github.com"
           git checkout -B "$REFRESH_BRANCH"
-          git add flake.nix nix/native-modules/package.json nix/native-modules/package-lock.json
+          git add flake.nix nix/native-modules/package.json nix/native-modules/package-lock.json SUPPORTED.md
           git commit \
             -m "fix(nix): refresh upstream Nix pins${CODEX_VERSION:+ for $CODEX_VERSION}" \
             -m "Refreshed Codex.dmg SRI hash to $CODEX_DMG_HASH and synced codexVersion / electronVersion / native-module pins to the current upstream DMG." \
@@ -86,6 +89,7 @@ jobs:
           - refresh Codex.dmg hash and upstream version pins to the current upstream DMG
           - update Electron fixed-output hashes when electronVersion changes
           - regenerate nix/native-modules/package-lock.json when native module pins change
+          - regenerate SUPPORTED.md from the refreshed Nix pins and approved upstream lock
           $APPCAST_NOTE
 
           ## Validation

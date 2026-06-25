@@ -249,7 +249,11 @@ run_core_job() {
     for file in scripts/patches/*.js; do
         node --check "$file"
     done
-    node --check scripts/ci/validate-patch-report.js
+    for file in scripts/ci/*.js; do
+        node --check "$file"
+    done
+    node --test scripts/ci/*.test.js
+    make check-supported
     node --test scripts/patch-linux-window-ui.test.js
 
     bash tests/scripts_smoke.sh
@@ -257,7 +261,7 @@ run_core_job() {
     append_summary "Rust and Smoke Tests" \
         "Shell syntax checks passed." \
         "Rust formatting, clippy, check, and tests passed." \
-        "Node patcher checks and script smoke tests passed."
+        "Node patcher checks, CI metadata tests, generated support docs, and script smoke tests passed."
 }
 
 run_deb_job() {
