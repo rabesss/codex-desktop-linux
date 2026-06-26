@@ -28,6 +28,12 @@ Descriptor and doctor output must stay free of host-specific paths. If a check
 must mention a path from the live session, redact or keep it in a local-only
 detail field rather than in static docs or plugin metadata.
 
+Doctor may report source labels for hydrated desktop/session environment
+variables through `env_hydration.desktop_session_env`. Keep this field
+source-only: it may classify keys as inherited, parent-process hydrated,
+systemd-user hydrated, XDG runtime fallback, or missing, but the live values
+belong in the existing platform/session diagnostics.
+
 ## Session Eligibility
 
 Window backends should be eligible before they are probed. The registry derives
@@ -46,6 +52,9 @@ Rules for maintainers:
   probes should be explicit in `doctor` so users can see why a backend did not
   run.
 - Backend probes must be read-only, short-lived, and safe to run repeatedly.
+- Capability lists must advertise implemented runtime paths only. For example,
+  `capabilities.isolation` should not include a theoretical compositor mode
+  unless the backend actually launches, owns, and tears down that context.
 
 Adding a backend means adding all of these together: a descriptor, a session
 eligibility rule, a read-only probe, list/focus implementations, doctor
