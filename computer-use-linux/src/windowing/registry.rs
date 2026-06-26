@@ -308,27 +308,32 @@ struct BackendSession {
 
 impl BackendSession {
     fn current() -> Self {
+        Self::from_env(|name| env::var(name).ok())
+    }
+
+    fn from_env(mut env_var: impl FnMut(&str) -> Option<String>) -> Self {
         let desktop = [
-            "XDG_CURRENT_DESKTOP",
-            "XDG_SESSION_DESKTOP",
-            "DESKTOP_SESSION",
+            env_value(&mut env_var, "XDG_CURRENT_DESKTOP"),
+            env_value(&mut env_var, "XDG_SESSION_DESKTOP"),
+            env_value(&mut env_var, "DESKTOP_SESSION"),
         ]
         .into_iter()
-        .filter_map(env_var)
+        .flatten()
         .collect::<Vec<_>>()
         .join(" ")
         .to_ascii_lowercase();
 
         Self {
             desktop,
-            session_type: env_var("XDG_SESSION_TYPE").map(|value| value.to_ascii_lowercase()),
-            has_display: env_var("DISPLAY").is_some(),
-            has_wayland_display: env_var("WAYLAND_DISPLAY").is_some(),
-            has_hyprland_instance: env_var("HYPRLAND_INSTANCE_SIGNATURE").is_some(),
-            swaysock: env_var("SWAYSOCK"),
-            i3sock: env_var("I3SOCK"),
-            probe_all: env_flag("CODEX_COMPUTER_USE_PROBE_ALL_BACKENDS"),
-            forced_backends: forced_backend_order(),
+            session_type: env_value(&mut env_var, "XDG_SESSION_TYPE")
+                .map(|value| value.to_ascii_lowercase()),
+            has_display: env_value(&mut env_var, "DISPLAY").is_some(),
+            has_wayland_display: env_value(&mut env_var, "WAYLAND_DISPLAY").is_some(),
+            has_hyprland_instance: env_value(&mut env_var, "HYPRLAND_INSTANCE_SIGNATURE").is_some(),
+            swaysock: env_value(&mut env_var, "SWAYSOCK"),
+            i3sock: env_value(&mut env_var, "I3SOCK"),
+            probe_all: env_flag(&mut env_var, "CODEX_COMPUTER_USE_PROBE_ALL_BACKENDS"),
+            forced_backends: forced_backend_order(&mut env_var),
         }
     }
 
@@ -390,8 +395,10 @@ impl BackendSession {
     }
 }
 
-fn forced_backend_order() -> Option<Vec<BackendKind>> {
-    let value = env_var("CODEX_COMPUTER_USE_WINDOW_BACKENDS")?;
+fn forced_backend_order(
+    env_var: &mut impl FnMut(&str) -> Option<String>,
+) -> Option<Vec<BackendKind>> {
+    let value = env_value(env_var, "CODEX_COMPUTER_USE_WINDOW_BACKENDS")?;
     let backends = value
         .split(',')
         .filter_map(|item| BackendKind::from_id(item.trim()))
@@ -399,13 +406,13 @@ fn forced_backend_order() -> Option<Vec<BackendKind>> {
     Some(backends)
 }
 
-fn env_flag(name: &str) -> bool {
-    env_var(name).is_some_and(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on"))
+fn env_flag(env_var: &mut impl FnMut(&str) -> Option<String>, name: &str) -> bool {
+    env_value(env_var, name)
+        .is_some_and(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on"))
 }
 
-fn env_var(name: &str) -> Option<String> {
-    env::var(name)
-        .ok()
+fn env_value(env_var: &mut impl FnMut(&str) -> Option<String>, name: &str) -> Option<String> {
+    env_var(name)
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
 }
@@ -490,6 +497,21 @@ mod tests {
         }
     }
 
+    fn session_from_env(vars: &[(&str, &str)]) -> BackendSession {
+        BackendSession::from_env(|name| {
+            vars.iter()
+                .find(|(key, _)| *key == name)
+                .map(|(_, value)| value.to_string())
+        })
+    }
+
+    fn all_backend_ids() -> Vec<&'static str> {
+        BACKEND_ORDER
+            .iter()
+            .map(|backend| backend.id())
+            .collect::<Vec<_>>()
+    }
+
     #[test]
     fn session_backend_order_prefers_hyprland_only_on_hyprland() {
         let mut session = session("Hyprland");
@@ -567,13 +589,7 @@ mod tests {
     fn session_backend_order_falls_back_to_all_backends_when_unknown() {
         let session = session("niri");
 
-        assert_eq!(
-            ids(backend_order_for_session(&session)),
-            BACKEND_ORDER
-                .iter()
-                .map(|backend| backend.id())
-                .collect::<Vec<_>>()
-        );
+        assert_eq!(ids(backend_order_for_session(&session)), all_backend_ids());
     }
 
     #[test]
@@ -584,6 +600,92 @@ mod tests {
         assert_eq!(
             ids(backend_order_for_session(&session)),
             vec![KWIN_BACKEND, SWAY_BACKEND]
+        );
+    }
+
+    #[test]
+    fn session_from_env_probe_all_backends_overrides_session_and_forced_list() {
+        let session = session_from_env(&[
+            ("XDG_CURRENT_DESKTOP", "Hyprland"),
+            ("CODEX_COMPUTER_USE_PROBE_ALL_BACKENDS", "yes"),
+            ("CODEX_COMPUTER_USE_WINDOW_BACKENDS", "kwin"),
+        ]);
+
+        assert!(session.probe_all);
+        assert_eq!(ids(backend_order_for_session(&session)), all_backend_ids());
+    }
+
+    #[test]
+    fn session_from_env_honors_backend_aliases_and_ignores_unknown_ids() {
+        let session = session_from_env(&[(
+            "CODEX_COMPUTER_USE_WINDOW_BACKENDS",
+            "kde,missing,gnome-shell-introspect,gnome,cosmic-wayland,sway-ipc,hyprland,i3",
+        )]);
+
+        assert_eq!(
+            ids(backend_order_for_session(&session)),
+            vec![
+                KWIN_BACKEND,
+                GNOME_SHELL_INTROSPECT_BACKEND,
+                GNOME_SHELL_EXTENSION_BACKEND,
+                COSMIC_WAYLAND_BACKEND,
+                SWAY_BACKEND,
+                HYPRLAND_BACKEND,
+                I3_BACKEND,
+            ]
+        );
+    }
+
+    #[test]
+    fn session_from_env_combines_mixed_desktop_variables_in_stable_backend_order() {
+        let session = session_from_env(&[
+            ("XDG_CURRENT_DESKTOP", "GNOME"),
+            ("XDG_SESSION_DESKTOP", "plasma"),
+            ("DESKTOP_SESSION", "Hyprland"),
+        ]);
+
+        assert_eq!(
+            ids(backend_order_for_session(&session)),
+            vec![
+                GNOME_SHELL_EXTENSION_BACKEND,
+                GNOME_SHELL_INTROSPECT_BACKEND,
+                KWIN_BACKEND,
+                HYPRLAND_BACKEND,
+            ]
+        );
+    }
+
+    #[test]
+    fn session_from_env_unknown_wayland_desktop_falls_back_to_all_backends() {
+        let session = session_from_env(&[
+            ("XDG_CURRENT_DESKTOP", "niri"),
+            ("XDG_SESSION_TYPE", "wayland"),
+            ("WAYLAND_DISPLAY", "wayland-1"),
+        ]);
+
+        assert_eq!(ids(backend_order_for_session(&session)), all_backend_ids());
+    }
+
+    #[test]
+    fn session_from_env_unknown_x11_session_uses_i3_only_without_known_wayland_compositor() {
+        let session = session_from_env(&[
+            ("DESKTOP_SESSION", "unknown"),
+            ("XDG_SESSION_TYPE", "x11"),
+            ("DISPLAY", ":1"),
+        ]);
+
+        assert_eq!(ids(backend_order_for_session(&session)), vec![I3_BACKEND]);
+
+        let hyprland_session = session_from_env(&[
+            ("DESKTOP_SESSION", "unknown"),
+            ("XDG_SESSION_TYPE", "x11"),
+            ("DISPLAY", ":1"),
+            ("HYPRLAND_INSTANCE_SIGNATURE", "abc123"),
+        ]);
+
+        assert_eq!(
+            ids(backend_order_for_session(&hyprland_session)),
+            vec![HYPRLAND_BACKEND]
         );
     }
 
