@@ -3669,8 +3669,10 @@ mod tests {
         let stale_socket = dir.join("stale.sock");
         std::fs::write(&stale_socket, b"not a socket").expect("write stale socket placeholder");
         let usable_socket = dir.join("usable.sock");
-        let listener =
-            std::os::unix::net::UnixListener::bind(&usable_socket).expect("bind usable socket");
+        let Some(listener) = bind_unix_listener_or_skip(&usable_socket) else {
+            let _ = std::fs::remove_dir_all(&dir);
+            return;
+        };
 
         let selected = connectable_ydotool_socket_from(vec![stale_socket, usable_socket.clone()])
             .expect("usable socket should be selected");
@@ -3691,8 +3693,10 @@ mod tests {
         let stale_socket = dir.join("stale.sock");
         std::fs::write(&stale_socket, b"not a socket").expect("write stale socket placeholder");
         let usable_socket = dir.join("usable.sock");
-        let datagram =
-            std::os::unix::net::UnixDatagram::bind(&usable_socket).expect("bind usable socket");
+        let Some(datagram) = bind_unix_datagram_or_skip(&usable_socket) else {
+            let _ = std::fs::remove_dir_all(&dir);
+            return;
+        };
 
         let selected = connectable_ydotool_socket_from(vec![stale_socket, usable_socket.clone()])
             .expect("usable socket should be selected");
@@ -3700,6 +3704,32 @@ mod tests {
         assert_eq!(selected, usable_socket);
         drop(datagram);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn bind_unix_listener_or_skip(
+        path: &std::path::Path,
+    ) -> Option<std::os::unix::net::UnixListener> {
+        match std::os::unix::net::UnixListener::bind(path) {
+            Ok(listener) => Some(listener),
+            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+                eprintln!("skipping socket-dependent assertion: {error}");
+                None
+            }
+            Err(error) => panic!("bind usable socket: {error}"),
+        }
+    }
+
+    fn bind_unix_datagram_or_skip(
+        path: &std::path::Path,
+    ) -> Option<std::os::unix::net::UnixDatagram> {
+        match std::os::unix::net::UnixDatagram::bind(path) {
+            Ok(socket) => Some(socket),
+            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+                eprintln!("skipping socket-dependent assertion: {error}");
+                None
+            }
+            Err(error) => panic!("bind usable datagram socket: {error}"),
+        }
     }
 
     #[test]

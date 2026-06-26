@@ -25,9 +25,20 @@ const DEFAULT_SOCKET_DIR: &str = "/tmp/codex-browser-use";
 const ROLLOUT_POLL_INTERVAL: Duration = Duration::from_millis(500);
 const OBSERVED_TURN_TTL: Duration = Duration::from_secs(6 * 60 * 60);
 const ROLLOUT_SEARCH_MAX_DEPTH: usize = 5;
+const MAX_FRAME_BYTES: usize = 64 * 1024 * 1024;
 
 type SharedState = Arc<Mutex<HostState>>;
-type SharedClientWriter = Arc<Mutex<UnixStream>>;
+type SharedClientWriter = Arc<Mutex<Box<dyn ClientWriter>>>;
+
+trait ClientWriter: Write + Send {
+    fn shutdown_both(&self) -> io::Result<()>;
+}
+
+impl ClientWriter for UnixStream {
+    fn shutdown_both(&self) -> io::Result<()> {
+        self.shutdown(Shutdown::Both)
+    }
+}
 
 #[derive(Clone)]
 struct Client {
@@ -446,7 +457,7 @@ fn accept_clients(listener: UnixListener, state: SharedState) {
         }
 
         let writer = match stream.try_clone() {
-            Ok(stream) => Arc::new(Mutex::new(stream)),
+            Ok(stream) => Arc::new(Mutex::new(Box::new(stream) as Box<dyn ClientWriter>)),
             Err(error) => {
                 log(&format!("client socket clone error: {error}"));
                 continue;
@@ -472,7 +483,7 @@ fn accept_clients(listener: UnixListener, state: SharedState) {
 fn close_client_socket(client: &Client) {
     match client.writer.lock() {
         Ok(writer) => {
-            let _ = writer.shutdown(Shutdown::Both);
+            let _ = writer.shutdown_both();
         }
         Err(error) => log(&format!("client socket close lock error: {error}")),
     }
@@ -1009,6 +1020,12 @@ fn read_frame(reader: &mut impl Read) -> io::Result<Option<Value>> {
         }
 
         let length = u32::from_ne_bytes(header) as usize;
+        if length > MAX_FRAME_BYTES {
+            return Err(io::Error::new(
+                ErrorKind::InvalidData,
+                format!("native message frame length {length} exceeds maximum {MAX_FRAME_BYTES}"),
+            ));
+        }
         let mut body = vec![0_u8; length];
         reader.read_exact(&mut body)?;
 
@@ -1052,6 +1069,16 @@ mod tests {
 
         let mut cursor = io::Cursor::new(encoded);
         assert_eq!(read_frame(&mut cursor).unwrap(), Some(message));
+    }
+
+    #[test]
+    fn oversized_frame_is_rejected_before_body_allocation() {
+        let oversized = (MAX_FRAME_BYTES as u32 + 1).to_ne_bytes();
+        let mut cursor = io::Cursor::new(oversized);
+        let error = read_frame(&mut cursor).unwrap_err();
+
+        assert_eq!(error.kind(), ErrorKind::InvalidData);
+        assert!(error.to_string().contains("exceeds maximum"));
     }
 
     #[test]
@@ -1268,14 +1295,9 @@ mod tests {
 
     #[test]
     fn client_diagnostics_request_returns_local_status_without_chrome_roundtrip() {
-        let (client_writer, mut client_reader) = UnixStream::pair().unwrap();
+        let (client, output) = test_client_with_output();
         let mut state = test_host_state();
-        state.clients.insert(
-            1,
-            Client {
-                writer: Arc::new(Mutex::new(client_writer)),
-            },
-        );
+        state.clients.insert(1, client);
         let state = Arc::new(Mutex::new(state));
 
         handle_client_message(
@@ -1289,7 +1311,7 @@ mod tests {
             }),
         );
 
-        let message = read_frame(&mut client_reader).unwrap().unwrap();
+        let message = read_output_frame(&output);
         assert_eq!(message["id"], "diagnostics-1");
         assert_eq!(message["result"]["connectedClientCount"], 1);
         assert_eq!(message["result"]["pendingChromeRequestCount"], 0);
@@ -1354,14 +1376,9 @@ mod tests {
 
     #[test]
     fn get_info_falls_back_when_runtime_get_version_is_missing() {
-        let (client_writer, mut client_reader) = UnixStream::pair().unwrap();
+        let (client, output) = test_client_with_output();
         let mut state = test_host_state();
-        state.clients.insert(
-            1,
-            Client {
-                writer: Arc::new(Mutex::new(client_writer)),
-            },
-        );
+        state.clients.insert(1, client);
         state.pending_chrome_requests.insert(
             "linux-1-1".to_string(),
             PendingChromeRequest {
@@ -1385,7 +1402,7 @@ mod tests {
             }),
         );
 
-        let message = read_frame(&mut client_reader).unwrap().unwrap();
+        let message = read_output_frame(&output);
         assert_eq!(message["id"], "info-1");
         assert_eq!(message["result"]["type"], "extension");
         assert_eq!(message["result"]["version"], "unknown");
@@ -1442,9 +1459,44 @@ mod tests {
     }
 
     fn test_client() -> Client {
-        let (stream, _peer) = UnixStream::pair().unwrap();
-        Client {
-            writer: Arc::new(Mutex::new(stream)),
+        test_client_with_output().0
+    }
+
+    fn test_client_with_output() -> (Client, Arc<Mutex<Vec<u8>>>) {
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let writer = MemoryClientWriter {
+            output: Arc::clone(&output),
+        };
+        let client = Client {
+            writer: Arc::new(Mutex::new(Box::new(writer) as Box<dyn ClientWriter>)),
+        };
+        (client, output)
+    }
+
+    fn read_output_frame(output: &Arc<Mutex<Vec<u8>>>) -> Value {
+        let bytes = output.lock().unwrap().clone();
+        let mut cursor = io::Cursor::new(bytes);
+        read_frame(&mut cursor).unwrap().unwrap()
+    }
+
+    struct MemoryClientWriter {
+        output: Arc<Mutex<Vec<u8>>>,
+    }
+
+    impl Write for MemoryClientWriter {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.output.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl ClientWriter for MemoryClientWriter {
+        fn shutdown_both(&self) -> io::Result<()> {
+            Ok(())
         }
     }
 
