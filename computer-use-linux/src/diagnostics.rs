@@ -14,6 +14,7 @@ use std::{
     },
     path::{Path, PathBuf},
     process::Command,
+    sync::{Mutex, OnceLock},
 };
 
 const DESKTOP_ENV_KEYS: &[&str] = &[
@@ -35,6 +36,7 @@ const DESKTOP_ENV_KEYS: &[&str] = &[
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct DoctorReport {
     pub platform: PlatformReport,
+    pub env_hydration: EnvHydrationReport,
     pub portals: PortalReport,
     pub accessibility: AccessibilityReport,
     pub windowing: WindowingReport,
@@ -44,6 +46,27 @@ pub struct DoctorReport {
     /// the one the tool prefers. Lets an agent (or selector) understand what's
     /// available and choose accordingly instead of assuming one fixed path.
     pub capabilities: CapabilityMap,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct EnvHydrationReport {
+    /// Source classification for desktop/session environment variables. This is
+    /// source-only by design; the live values remain in `platform`.
+    pub desktop_session_env: BTreeMap<String, EnvHydrationSource>,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, JsonSchema)]
+pub enum EnvHydrationSource {
+    #[serde(rename = "inherited_process_env")]
+    InheritedProcessEnv,
+    #[serde(rename = "parent_process_hydration")]
+    ParentProcessHydration,
+    #[serde(rename = "systemctl_user_show_environment")]
+    SystemctlUserShowEnvironment,
+    #[serde(rename = "xdg_runtime_fallback")]
+    XdgRuntimeFallback,
+    #[serde(rename = "missing")]
+    Missing,
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
@@ -172,7 +195,7 @@ impl Check {
 }
 
 pub fn doctor_report() -> DoctorReport {
-    hydrate_session_bus_env();
+    let env_hydration = hydrate_session_bus_env_with_report();
 
     let platform = platform_report();
     let portals = portal_report();
@@ -185,6 +208,7 @@ pub fn doctor_report() -> DoctorReport {
 
     DoctorReport {
         platform,
+        env_hydration,
         portals,
         accessibility,
         windowing,
@@ -275,30 +299,66 @@ fn capability_map(
     }
 }
 
-pub fn hydrate_session_bus_env() {
-    hydrate_common_command_path();
-    hydrate_desktop_env_from_process_tree();
-    hydrate_desktop_env_from_systemd_user();
+static ENV_HYDRATION_SOURCES: OnceLock<Mutex<BTreeMap<String, RememberedEnvHydrationSource>>> =
+    OnceLock::new();
 
-    if env_var("XDG_RUNTIME_DIR").is_none() {
+pub fn hydrate_session_bus_env() {
+    let _ = hydrate_session_bus_env_with_report();
+}
+
+fn hydrate_session_bus_env_with_report() -> EnvHydrationReport {
+    hydrate_common_command_path();
+
+    let remembered_sources = remembered_env_hydration_sources();
+    let mut state =
+        DesktopEnvHydrationState::from_env_map(&current_desktop_env_map(), &remembered_sources);
+
+    for process_env in desktop_process_environments() {
+        apply_env_assignments(
+            state.hydrate_from_map(&process_env, EnvHydrationSource::ParentProcessHydration),
+        );
+
+        if state.has_all_keys() {
+            break;
+        }
+    }
+
+    if let Some(systemd_env) = systemd_user_environment() {
+        apply_env_assignments(state.hydrate_from_map(
+            &systemd_env,
+            EnvHydrationSource::SystemctlUserShowEnvironment,
+        ));
+    }
+
+    if state.get("XDG_RUNTIME_DIR").is_none() {
         if let Some(runtime) = xdg_runtime_dir() {
             if runtime.exists() {
-                env::set_var("XDG_RUNTIME_DIR", runtime);
+                let runtime = runtime.display().to_string();
+                if let Some((key, value)) =
+                    state.hydrate_fallback("XDG_RUNTIME_DIR", runtime.clone())
+                {
+                    env::set_var(key, value);
+                }
             }
         }
     }
 
-    if env_var("DBUS_SESSION_BUS_ADDRESS").is_none() {
+    if state.get("DBUS_SESSION_BUS_ADDRESS").is_none() {
         if let Some(runtime) = xdg_runtime_dir() {
             let bus = runtime.join("bus");
             if bus.exists() {
-                env::set_var(
-                    "DBUS_SESSION_BUS_ADDRESS",
-                    format!("unix:path={}", bus.display()),
-                );
+                let address = format!("unix:path={}", bus.display());
+                if let Some((key, value)) =
+                    state.hydrate_fallback("DBUS_SESSION_BUS_ADDRESS", address.clone())
+                {
+                    env::set_var(key, value);
+                }
             }
         }
     }
+
+    remember_env_hydration_sources(state.remembered_sources());
+    state.report()
 }
 
 fn hydrate_common_command_path() {
@@ -321,42 +381,165 @@ fn hydrate_common_command_path() {
     }
 }
 
-fn hydrate_desktop_env_from_process_tree() {
-    for process_env in desktop_process_environments() {
-        hydrate_desktop_env_from_map(&process_env);
+#[derive(Debug, Clone)]
+struct DesktopEnvHydrationState {
+    values: HashMap<String, String>,
+    sources: BTreeMap<String, EnvHydrationSource>,
+}
 
-        if DESKTOP_ENV_KEYS.iter().all(|key| env_var(key).is_some()) {
-            break;
+#[derive(Debug, Clone)]
+struct RememberedEnvHydrationSource {
+    value: String,
+    source: EnvHydrationSource,
+}
+
+impl DesktopEnvHydrationState {
+    fn from_env_map(
+        process_env: &HashMap<String, String>,
+        remembered_sources: &BTreeMap<String, RememberedEnvHydrationSource>,
+    ) -> Self {
+        let mut state = Self {
+            values: HashMap::new(),
+            sources: BTreeMap::new(),
+        };
+
+        for key in DESKTOP_ENV_KEYS {
+            if let Some(value) = process_env
+                .get(*key)
+                .filter(|value| !value.trim().is_empty())
+            {
+                state.values.insert((*key).to_string(), value.clone());
+                let source = remembered_sources
+                    .get(*key)
+                    .filter(|remembered| remembered.value == *value)
+                    .map(|remembered| remembered.source)
+                    .unwrap_or(EnvHydrationSource::InheritedProcessEnv);
+                state.sources.insert((*key).to_string(), source);
+            }
         }
+
+        state
+    }
+
+    fn hydrate_from_map(
+        &mut self,
+        process_env: &HashMap<String, String>,
+        source: EnvHydrationSource,
+    ) -> Vec<(String, String)> {
+        let mut assignments = Vec::new();
+
+        for key in DESKTOP_ENV_KEYS {
+            if self.values.contains_key(*key) {
+                continue;
+            }
+            if let Some(value) = process_env
+                .get(*key)
+                .filter(|value| !value.trim().is_empty())
+            {
+                self.values.insert((*key).to_string(), value.clone());
+                self.sources.insert((*key).to_string(), source);
+                assignments.push(((*key).to_string(), value.clone()));
+            }
+        }
+
+        assignments
+    }
+
+    fn hydrate_fallback(&mut self, key: &str, value: String) -> Option<(String, String)> {
+        if self.values.contains_key(key) || value.trim().is_empty() {
+            return None;
+        }
+
+        self.values.insert(key.to_string(), value.clone());
+        self.sources
+            .insert(key.to_string(), EnvHydrationSource::XdgRuntimeFallback);
+        Some((key.to_string(), value))
+    }
+
+    fn get(&self, key: &str) -> Option<&str> {
+        self.values.get(key).map(String::as_str)
+    }
+
+    fn has_all_keys(&self) -> bool {
+        DESKTOP_ENV_KEYS
+            .iter()
+            .all(|key| self.values.contains_key(*key))
+    }
+
+    fn report(&self) -> EnvHydrationReport {
+        let desktop_session_env = DESKTOP_ENV_KEYS
+            .iter()
+            .map(|key| {
+                (
+                    (*key).to_string(),
+                    self.sources
+                        .get(*key)
+                        .copied()
+                        .unwrap_or(EnvHydrationSource::Missing),
+                )
+            })
+            .collect();
+
+        EnvHydrationReport {
+            desktop_session_env,
+        }
+    }
+
+    fn remembered_sources(&self) -> BTreeMap<String, RememberedEnvHydrationSource> {
+        self.sources
+            .iter()
+            .filter_map(|(key, source)| {
+                self.values.get(key).map(|value| {
+                    (
+                        key.clone(),
+                        RememberedEnvHydrationSource {
+                            value: value.clone(),
+                            source: *source,
+                        },
+                    )
+                })
+            })
+            .collect()
     }
 }
 
-fn hydrate_desktop_env_from_systemd_user() {
+fn current_desktop_env_map() -> HashMap<String, String> {
+    DESKTOP_ENV_KEYS
+        .iter()
+        .filter_map(|key| env_var(key).map(|value| ((*key).to_string(), value)))
+        .collect()
+}
+
+fn apply_env_assignments(assignments: Vec<(String, String)>) {
+    for (key, value) in assignments {
+        env::set_var(key, value);
+    }
+}
+
+fn systemd_user_environment() -> Option<HashMap<String, String>> {
     let Ok(output) = Command::new("systemctl")
         .args(["--user", "show-environment"])
         .output()
     else {
-        return;
+        return None;
     };
     if !output.status.success() {
-        return;
+        return None;
     }
-    let env_map = parse_line_environment(&output.stdout);
-    hydrate_desktop_env_from_map(&env_map);
+    Some(parse_line_environment(&output.stdout))
 }
 
-fn hydrate_desktop_env_from_map(process_env: &HashMap<String, String>) {
-    for key in DESKTOP_ENV_KEYS {
-        if env_var(key).is_some() {
-            continue;
-        }
-        if let Some(value) = process_env
-            .get(*key)
-            .filter(|value| !value.trim().is_empty())
-        {
-            env::set_var(key, value);
-        }
-    }
+fn remembered_env_hydration_sources() -> BTreeMap<String, RememberedEnvHydrationSource> {
+    let sources = ENV_HYDRATION_SOURCES.get_or_init(|| Mutex::new(BTreeMap::new()));
+    sources
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
+}
+
+fn remember_env_hydration_sources(sources: BTreeMap<String, RememberedEnvHydrationSource>) {
+    let lock = ENV_HYDRATION_SOURCES.get_or_init(|| Mutex::new(BTreeMap::new()));
+    *lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = sources;
 }
 
 fn desktop_process_environments() -> Vec<HashMap<String, String>> {
@@ -1119,6 +1302,146 @@ mod tests {
             Some("/run/ydotoold/socket")
         );
         assert!(!environment.contains_key("NO_EQUALS"));
+    }
+
+    #[test]
+    fn env_hydration_sources_distinguish_all_desktop_env_sources() {
+        let inherited_env = HashMap::from([("DISPLAY".to_string(), ":0".to_string())]);
+        let parent_env = HashMap::from([
+            ("WAYLAND_DISPLAY".to_string(), "wayland-0".to_string()),
+            ("XDG_SESSION_TYPE".to_string(), "wayland".to_string()),
+        ]);
+        let systemd_env = HashMap::from([("XDG_CURRENT_DESKTOP".to_string(), "GNOME".to_string())]);
+
+        let mut state = DesktopEnvHydrationState::from_env_map(&inherited_env, &BTreeMap::new());
+        let parent_assignments =
+            state.hydrate_from_map(&parent_env, EnvHydrationSource::ParentProcessHydration);
+        let systemd_assignments = state.hydrate_from_map(
+            &systemd_env,
+            EnvHydrationSource::SystemctlUserShowEnvironment,
+        );
+        let runtime_assignment =
+            state.hydrate_fallback("XDG_RUNTIME_DIR", "/run/user/1000".to_string());
+        let bus_assignment = state.hydrate_fallback(
+            "DBUS_SESSION_BUS_ADDRESS",
+            "unix:path=/run/user/1000/bus".to_string(),
+        );
+
+        assert_eq!(
+            parent_assignments,
+            vec![
+                ("WAYLAND_DISPLAY".to_string(), "wayland-0".to_string()),
+                ("XDG_SESSION_TYPE".to_string(), "wayland".to_string()),
+            ]
+        );
+        assert_eq!(
+            systemd_assignments,
+            vec![("XDG_CURRENT_DESKTOP".to_string(), "GNOME".to_string())]
+        );
+        assert_eq!(
+            runtime_assignment,
+            Some(("XDG_RUNTIME_DIR".to_string(), "/run/user/1000".to_string()))
+        );
+        assert_eq!(
+            bus_assignment,
+            Some((
+                "DBUS_SESSION_BUS_ADDRESS".to_string(),
+                "unix:path=/run/user/1000/bus".to_string()
+            ))
+        );
+
+        let report = state.report();
+        assert_eq!(
+            report.desktop_session_env.get("DISPLAY"),
+            Some(&EnvHydrationSource::InheritedProcessEnv)
+        );
+        assert_eq!(
+            report.desktop_session_env.get("WAYLAND_DISPLAY"),
+            Some(&EnvHydrationSource::ParentProcessHydration)
+        );
+        assert_eq!(
+            report.desktop_session_env.get("XDG_SESSION_TYPE"),
+            Some(&EnvHydrationSource::ParentProcessHydration)
+        );
+        assert_eq!(
+            report.desktop_session_env.get("XDG_CURRENT_DESKTOP"),
+            Some(&EnvHydrationSource::SystemctlUserShowEnvironment)
+        );
+        assert_eq!(
+            report.desktop_session_env.get("XDG_RUNTIME_DIR"),
+            Some(&EnvHydrationSource::XdgRuntimeFallback)
+        );
+        assert_eq!(
+            report.desktop_session_env.get("DBUS_SESSION_BUS_ADDRESS"),
+            Some(&EnvHydrationSource::XdgRuntimeFallback)
+        );
+        assert_eq!(
+            report.desktop_session_env.get("DESKTOP_SESSION"),
+            Some(&EnvHydrationSource::Missing)
+        );
+    }
+
+    #[test]
+    fn env_hydration_keeps_remembered_source_for_previous_hydration() {
+        let current_env = HashMap::from([("WAYLAND_DISPLAY".to_string(), "wayland-0".to_string())]);
+        let remembered_sources = BTreeMap::from([(
+            "WAYLAND_DISPLAY".to_string(),
+            RememberedEnvHydrationSource {
+                value: "wayland-0".to_string(),
+                source: EnvHydrationSource::ParentProcessHydration,
+            },
+        )]);
+
+        let state = DesktopEnvHydrationState::from_env_map(&current_env, &remembered_sources);
+        let report = state.report();
+
+        assert_eq!(
+            report.desktop_session_env.get("WAYLAND_DISPLAY"),
+            Some(&EnvHydrationSource::ParentProcessHydration)
+        );
+        assert_eq!(
+            report.desktop_session_env.get("DISPLAY"),
+            Some(&EnvHydrationSource::Missing)
+        );
+    }
+
+    #[test]
+    fn env_hydration_ignores_remembered_source_when_value_changes() {
+        let current_env = HashMap::from([("DISPLAY".to_string(), ":1".to_string())]);
+        let remembered_sources = BTreeMap::from([(
+            "DISPLAY".to_string(),
+            RememberedEnvHydrationSource {
+                value: ":0".to_string(),
+                source: EnvHydrationSource::ParentProcessHydration,
+            },
+        )]);
+
+        let state = DesktopEnvHydrationState::from_env_map(&current_env, &remembered_sources);
+        let report = state.report();
+
+        assert_eq!(state.get("DISPLAY"), Some(":1"));
+        assert_eq!(
+            report.desktop_session_env.get("DISPLAY"),
+            Some(&EnvHydrationSource::InheritedProcessEnv)
+        );
+    }
+
+    #[test]
+    fn env_hydration_does_not_overwrite_inherited_env_with_hydrated_sources() {
+        let inherited_env = HashMap::from([("DISPLAY".to_string(), ":0".to_string())]);
+        let parent_env = HashMap::from([("DISPLAY".to_string(), ":1".to_string())]);
+
+        let mut state = DesktopEnvHydrationState::from_env_map(&inherited_env, &BTreeMap::new());
+        let assignments =
+            state.hydrate_from_map(&parent_env, EnvHydrationSource::ParentProcessHydration);
+        let report = state.report();
+
+        assert!(assignments.is_empty());
+        assert_eq!(state.get("DISPLAY"), Some(":0"));
+        assert_eq!(
+            report.desktop_session_env.get("DISPLAY"),
+            Some(&EnvHydrationSource::InheritedProcessEnv)
+        );
     }
 
     #[test]
