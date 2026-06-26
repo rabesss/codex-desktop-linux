@@ -35,7 +35,7 @@ check_absent \
 
 check_absent \
   "browser-control code does not change the system default browser" \
-  'xdg-settings[[:space:]]+set[[:space:]]+default-web-browser|xdg-mime[[:space:]]+default.*(x-scheme-handler/(http|https)|text/html)' \
+  'xdg-settings[^[:alnum:]_]+set[^[:alnum:]_]+default-web-browser|xdg-mime[^[:alnum:]_]+default.*(x-scheme-handler/(http|https)|text/html)' \
   docs \
   linux-features \
   packaging \

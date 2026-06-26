@@ -99,7 +99,7 @@ pub(crate) mod tests {
 
     pub(crate) fn output_with_status(code: i32, stdout: &str, stderr: &str) -> Output {
         Output {
-            status: ExitStatus::from_raw(code),
+            status: ExitStatus::from_raw(code << 8),
             stdout: stdout.as_bytes().to_vec(),
             stderr: stderr.as_bytes().to_vec(),
         }
