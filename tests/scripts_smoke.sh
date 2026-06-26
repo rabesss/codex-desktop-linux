@@ -1716,11 +1716,14 @@ test_setup_native_wizard_sway_hint_mentions_sway_ipc() {
 }
 
 test_upstream_build_app_workflow_tracks_dmg_metadata() {
-    info "Checking upstream build-app workflow metadata and cache behavior"
+    info "Checking upstream DMG watcher workflow metadata, cache, and drift behavior"
     local workflow="$REPO_DIR/.github/workflows/upstream-build-app.yml"
 
     assert_file_exists "$workflow"
-    assert_contains "$workflow" 'name: Upstream Build App'
+    assert_contains "$workflow" 'name: Upstream DMG Watcher'
+    assert_contains "$workflow" 'workflow_dispatch:'
+    assert_not_contains "$workflow" 'pull_request:'
+    assert_not_contains "$workflow" 'branches:'
     assert_contains "$workflow" 'UPSTREAM_DMG_URL: https://persistent.oaistatic.com/codex-app-prod/Codex.dmg'
     assert_contains "$workflow" 'actions/cache@v4'
     assert_contains "$workflow" 'path: /tmp/codex-upstream-ci/Codex.dmg'
@@ -1728,6 +1731,9 @@ test_upstream_build_app_workflow_tracks_dmg_metadata() {
     assert_contains "$workflow" 'sha256sum'
     assert_contains "$workflow" 'CODEX_PATCH_REPORT_JSON="$GITHUB_WORKSPACE/patch-report.json"'
     assert_contains "$workflow" 'node scripts/ci/validate-patch-report.js patch-report.json --profile upstream-build'
+    assert_contains "$workflow" "steps.patch-validation.outcome == 'success' && steps.upstream-lock.outputs.is_drift == 'true'"
+    assert_contains "$workflow" 'node scripts/ci/write-upstream-drift-report.js'
+    assert_contains "$workflow" 'upstream-dmg-patch-drift-metadata'
     assert_contains "$workflow" 'make build-app DMG=/tmp/codex-upstream-ci/Codex.dmg'
     assert_contains "$workflow" 'DMG Last-Modified'
     assert_contains "$workflow" 'DMG SHA-256'
