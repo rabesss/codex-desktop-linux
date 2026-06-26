@@ -43,6 +43,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   Mode, AppShots, remote-control/mobile overlays, Zed opener, Copilot reasoning
   defaults, and the example feature. The active build now carries the official
   app surfaces plus maintained Linux/custom-model/browser/updater patches.
+- Added deterministic Linux Computer Use backend tests for session-derived
+  backend selection and command-backed Hyprland, Sway, and i3 adapters.
+  Maintainers can exercise `hyprctl`, `swaymsg`, `i3-msg`, and `xprop` command
+  construction offline without requiring live compositors.
 
 - The `make setup-native` Linux feature picker can now present a GUI checklist
   (zenity or kdialog) instead of the terminal-only numbered prompt, pre-checked
