@@ -403,7 +403,7 @@ impl DesktopEnvHydrationState {
         for key in DESKTOP_ENV_KEYS {
             if let Some(value) = process_env
                 .get(*key)
-                .filter(|value| !value.trim().is_empty())
+                .filter(|value| desktop_env_value_is_usable(key, value))
             {
                 state.values.insert((*key).to_string(), value.clone());
                 let source = remembered_sources
@@ -431,7 +431,7 @@ impl DesktopEnvHydrationState {
             }
             if let Some(value) = process_env
                 .get(*key)
-                .filter(|value| !value.trim().is_empty())
+                .filter(|value| desktop_env_value_is_usable(key, value))
             {
                 self.values.insert((*key).to_string(), value.clone());
                 self.sources.insert((*key).to_string(), source);
@@ -511,6 +511,49 @@ fn apply_env_assignments(assignments: Vec<(String, String)>) {
     for (key, value) in assignments {
         env::set_var(key, value);
     }
+}
+
+fn desktop_env_value_is_usable(key: &str, value: &str) -> bool {
+    if value.trim().is_empty() {
+        return false;
+    }
+
+    match key {
+        "XDG_RUNTIME_DIR" => Path::new(value).is_dir(),
+        "DBUS_SESSION_BUS_ADDRESS" => session_bus_address_is_usable(value),
+        _ => true,
+    }
+}
+
+fn session_bus_address_is_usable(value: &str) -> bool {
+    let mut saw_address = false;
+    let mut saw_file_path = false;
+
+    for address in value
+        .split(';')
+        .map(str::trim)
+        .filter(|address| !address.is_empty())
+    {
+        saw_address = true;
+        let Some(path) = session_bus_address_path(address) else {
+            return true;
+        };
+        saw_file_path = true;
+        if UnixStream::connect(path).is_ok() {
+            return true;
+        }
+    }
+
+    saw_address && !saw_file_path
+}
+
+fn session_bus_address_path(address: &str) -> Option<PathBuf> {
+    let unix_options = address.strip_prefix("unix:")?;
+    unix_options
+        .split(',')
+        .find_map(|option| option.strip_prefix("path="))
+        .filter(|path| !path.trim().is_empty())
+        .map(PathBuf::from)
 }
 
 fn systemd_user_environment() -> Option<HashMap<String, String>> {
@@ -922,23 +965,23 @@ fn env_var(key: &str) -> Option<String> {
 }
 
 fn xdg_runtime_dir() -> Option<PathBuf> {
-    if let Some(value) = env_var("XDG_RUNTIME_DIR") {
+    if let Some(value) = env_var("XDG_RUNTIME_DIR")
+        .filter(|value| desktop_env_value_is_usable("XDG_RUNTIME_DIR", value))
+    {
         return Some(PathBuf::from(value));
     }
     user_id().map(|uid| PathBuf::from(format!("/run/user/{uid}")))
 }
 
 fn dbus_session_address() -> Option<String> {
-    if let Some(value) = env_var("DBUS_SESSION_BUS_ADDRESS") {
+    if let Some(value) = env_var("DBUS_SESSION_BUS_ADDRESS")
+        .filter(|value| desktop_env_value_is_usable("DBUS_SESSION_BUS_ADDRESS", value))
+    {
         return Some(value);
     }
     xdg_runtime_dir()
         .map(|runtime| format!("unix:path={}", runtime.join("bus").display()))
-        .filter(|address| {
-            address
-                .strip_prefix("unix:path=")
-                .is_some_and(|p| Path::new(p).exists())
-        })
+        .filter(|address| session_bus_address_is_usable(address))
 }
 
 fn ydotool_socket_candidates() -> Vec<PathBuf> {
@@ -1439,6 +1482,102 @@ mod tests {
             report.desktop_session_env.get("DISPLAY"),
             Some(&EnvHydrationSource::InheritedProcessEnv)
         );
+    }
+
+    #[test]
+    fn env_hydration_rejects_stale_runtime_and_session_bus_values() {
+        let mut missing_runtime =
+            std::env::temp_dir().join(format!("codex-missing-runtime-{}", std::process::id()));
+        let mut suffix = 0;
+        while missing_runtime.exists() {
+            suffix += 1;
+            missing_runtime = std::env::temp_dir().join(format!(
+                "codex-missing-runtime-{}-{suffix}",
+                std::process::id()
+            ));
+        }
+        let missing_bus = missing_runtime.join("bus");
+        let parent_env = HashMap::from([
+            (
+                "XDG_RUNTIME_DIR".to_string(),
+                missing_runtime.display().to_string(),
+            ),
+            (
+                "DBUS_SESSION_BUS_ADDRESS".to_string(),
+                format!("unix:path={}", missing_bus.display()),
+            ),
+        ]);
+
+        let mut state = DesktopEnvHydrationState::from_env_map(&HashMap::new(), &BTreeMap::new());
+        let assignments =
+            state.hydrate_from_map(&parent_env, EnvHydrationSource::ParentProcessHydration);
+        let runtime_assignment =
+            state.hydrate_fallback("XDG_RUNTIME_DIR", "/run/user/1000".to_string());
+        let bus_assignment = state.hydrate_fallback(
+            "DBUS_SESSION_BUS_ADDRESS",
+            "unix:path=/run/user/1000/bus".to_string(),
+        );
+
+        assert!(assignments.is_empty());
+        assert_eq!(
+            runtime_assignment,
+            Some(("XDG_RUNTIME_DIR".to_string(), "/run/user/1000".to_string()))
+        );
+        assert_eq!(
+            bus_assignment,
+            Some((
+                "DBUS_SESSION_BUS_ADDRESS".to_string(),
+                "unix:path=/run/user/1000/bus".to_string()
+            ))
+        );
+        assert_eq!(state.get("XDG_RUNTIME_DIR"), Some("/run/user/1000"));
+        assert_eq!(
+            state.get("DBUS_SESSION_BUS_ADDRESS"),
+            Some("unix:path=/run/user/1000/bus")
+        );
+    }
+
+    #[test]
+    fn session_bus_address_validation_rejects_missing_or_non_socket_file_paths() {
+        let mut missing_bus =
+            std::env::temp_dir().join(format!("codex-missing-bus-{}", std::process::id()));
+        let mut suffix = 0;
+        while missing_bus.exists() {
+            suffix += 1;
+            missing_bus = std::env::temp_dir()
+                .join(format!("codex-missing-bus-{}-{suffix}", std::process::id()));
+        }
+
+        let mut socket_path =
+            std::env::temp_dir().join(format!("codex-test-bus-{}", std::process::id()));
+        let mut suffix = 0;
+        while socket_path.exists() {
+            suffix += 1;
+            socket_path = std::env::temp_dir()
+                .join(format!("codex-test-bus-{}-{suffix}", std::process::id()));
+        }
+        let listener = std::os::unix::net::UnixListener::bind(&socket_path)
+            .expect("bind temporary Unix listener");
+
+        assert!(session_bus_address_is_usable(&format!(
+            "unix:path={}",
+            socket_path.display()
+        )));
+        assert!(!session_bus_address_is_usable(&format!(
+            "unix:path={}",
+            std::env::temp_dir().display()
+        )));
+        assert!(!session_bus_address_is_usable(&format!(
+            "unix:path={}",
+            missing_bus.display()
+        )));
+        assert!(!session_bus_address_is_usable(" ; "));
+        assert!(session_bus_address_is_usable(
+            "unix:abstract=/tmp/dbus-test"
+        ));
+
+        drop(listener);
+        let _ = fs::remove_file(socket_path);
     }
 
     #[test]
