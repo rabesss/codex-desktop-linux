@@ -275,13 +275,10 @@ fn capability_map(
         accessibility_backends.push("at_spi".to_string());
     }
 
-    // Isolation contexts: the live shared session is always available; a headless
-    // GNOME session is possible when gnome-shell is installed (it supports
-    // --headless --virtual-monitor), giving the agent its own seat.
-    let mut isolation = vec!["shared".to_string()];
-    if platform.gnome_shell_version.ok {
-        isolation.push("headless_gnome".to_string());
-    }
+    // Isolation contexts implemented by the shipped backend. The backend can
+    // operate in the user's live shared session, but it does not launch or
+    // manage isolated headless desktop sessions.
+    let isolation = vec!["shared".to_string()];
 
     let preferred = PreferredBackends {
         input: input_backends.first().cloned(),
@@ -1459,6 +1456,26 @@ mod tests {
         assert!(process_env_has_graphical_display(&with_display));
         assert!(process_env_has_graphical_display(&with_wayland));
         assert!(!process_env_has_graphical_display(&without_display));
+    }
+
+    #[test]
+    fn capability_map_reports_only_implemented_isolation_contexts() {
+        let platform = platform_report();
+        assert!(platform.gnome_shell_version.ok);
+
+        let capabilities = capability_map(
+            &platform,
+            &portal_report(Check::fail("missing")),
+            &accessibility_report(Check::fail("missing"), Check::fail("false")),
+            &windowing_report(false, false),
+            &input_report(false),
+        );
+
+        assert_eq!(capabilities.isolation, vec!["shared".to_string()]);
+        assert!(!capabilities
+            .isolation
+            .iter()
+            .any(|capability| capability == "headless_gnome"));
     }
 
     #[test]
