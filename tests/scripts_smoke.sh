@@ -2974,6 +2974,8 @@ PY
     assert_contains "$REPO_DIR/launcher/start.sh.template" 'marketplace_plugin_link="$marketplace_root/plugins/$plugin_dir_name"'
     assert_contains "$REPO_DIR/launcher/start.sh.template" "sync_chrome_bundled_plugin_cache"
     assert_contains "$REPO_DIR/launcher/start.sh.template" "make_tree_owner_writable"
+    assert_contains "$REPO_DIR/launcher/start.sh.template" "extension-host-config.json"
+    assert_contains "$REPO_DIR/launcher/start.sh.template" "nodeReplPath"
     assert_contains "$REPO_DIR/launcher/start.sh.template" "clear_bundled_marketplace_tmp_cache"
     assert_contains "$REPO_DIR/launcher/start.sh.template" "monitor_bundled_marketplace_tmp_permissions"
     assert_contains "$REPO_DIR/launcher/start.sh.template" "extension-id.json"

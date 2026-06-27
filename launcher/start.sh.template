@@ -791,6 +791,34 @@ manifest = {
 }
 text = json.dumps(manifest, separators=(",", ":"))
 
+config_path = pathlib.Path(host_path).parent / "extension-host-config.json"
+config = {
+    "schemaVersion": 1,
+    "channel": "prod",
+    "browserClientPath": str(scripts_dir / "browser-client.mjs"),
+    "codexCliPath": str(app_dir / "resources" / "bin" / "codex"),
+    "extensionId": extension_id,
+    "nodePath": str(app_dir / "resources" / "node-runtime" / "bin" / "node"),
+    "nodeReplPath": str(app_dir / "resources" / "node_repl"),
+    "proxyHost": "127.0.0.1",
+    "proxyPort": 0,
+}
+config_runtime_paths = [
+    pathlib.Path(config["browserClientPath"]),
+    pathlib.Path(config["codexCliPath"]),
+    pathlib.Path(config["nodePath"]),
+    pathlib.Path(config["nodeReplPath"]),
+]
+if all(candidate.is_file() for candidate in config_runtime_paths):
+    config_text = json.dumps(config, indent=2) + "\n"
+    try:
+        if config_path.read_text(encoding="utf-8") != config_text:
+            config_path.write_text(config_text, encoding="utf-8")
+    except FileNotFoundError:
+        config_path.write_text(config_text, encoding="utf-8")
+    except OSError as exc:
+        print(f"Unable to write Chrome native host config {config_path}: {exc}", file=sys.stderr)
+
 manifest_locations = [
     ".config/google-chrome/NativeMessagingHosts",
     ".config/BraveSoftware/Brave-Browser/NativeMessagingHosts",
