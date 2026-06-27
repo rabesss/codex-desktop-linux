@@ -100,15 +100,36 @@ jobs:
           - [ ] official OpenAI/Codex routing remains direct
           EOF
 
+          pr_error="$RUNNER_TEMP/promotion-pr-error.txt"
           pr_url="$(gh pr list --base main --head "$PROMOTION_BRANCH" --state open --json url --jq '.[0].url // ""')"
           if [[ -z "$pr_url" ]]; then
-            gh pr create \
-              --base main \
-              --head "$PROMOTION_BRANCH" \
-              --title "chore: promote upstream Codex DMG ${version}" \
-              --body-file "$body"
+            if ! pr_url="$(gh pr create \
+                --base main \
+                --head "$PROMOTION_BRANCH" \
+                --title "chore: promote upstream Codex DMG ${version}" \
+                --body-file "$body" 2>"$pr_error")"; then
+              pr_url=""
+            fi
           else
-            gh pr edit "$pr_url" \
-              --title "chore: promote upstream Codex DMG ${version}" \
-              --body-file "$body"
+            if ! gh pr edit "$pr_url" \
+                --title "chore: promote upstream Codex DMG ${version}" \
+                --body-file "$body" 2>"$pr_error"; then
+              pr_url=""
+            fi
+          fi
+
+          if [[ -n "$pr_url" ]]; then
+            echo "Opened or updated promotion PR: $pr_url"
+          else
+            pr_error_summary="$(tr '\n' ' ' <"$pr_error" | sed 's/%/%25/g; s/\r/%0D/g; s/\n/%0A/g')"
+            echo "::warning title=Promotion PR not created::${pr_error_summary:-gh pr create/edit failed}"
+            {
+              echo "## Promotion branch ready"
+              echo ""
+              echo "- Branch: \`$PROMOTION_BRANCH\`"
+              echo "- PR creation/edit was blocked by repository or token policy."
+              echo "- Review the branch manually before merging."
+              echo ""
+              cat "$body"
+            } >>"$GITHUB_STEP_SUMMARY"
           fi

@@ -104,23 +104,44 @@ jobs:
           - refreshed Codex.dmg SRI hash: \`$CODEX_DMG_HASH\`
           EOF
 
+          pr_error="$RUNNER_TEMP/nix-refresh-pr-error.txt"
           pr_url="$(gh pr list --repo "$GITHUB_REPOSITORY" --base main --head "$REFRESH_BRANCH" --state open --json url --jq '.[0].url // ""')"
           if [ -z "$pr_url" ]; then
-            pr_url="$(gh pr create \
-              --repo "$GITHUB_REPOSITORY" \
-              --base main \
-              --head "$REFRESH_BRANCH" \
-              --title "fix(nix): refresh upstream Nix pins${CODEX_VERSION:+ for $CODEX_VERSION}" \
-              --body-file "$pr_body")"
+            if ! pr_url="$(gh pr create \
+                --repo "$GITHUB_REPOSITORY" \
+                --base main \
+                --head "$REFRESH_BRANCH" \
+                --title "fix(nix): refresh upstream Nix pins${CODEX_VERSION:+ for $CODEX_VERSION}" \
+                --body-file "$pr_body" 2>"$pr_error")"; then
+              pr_url=""
+            fi
           else
-            gh pr edit "$pr_url" \
-              --title "fix(nix): refresh upstream Nix pins${CODEX_VERSION:+ for $CODEX_VERSION}" \
-              --body-file "$pr_body"
+            if ! gh pr edit "$pr_url" \
+                --title "fix(nix): refresh upstream Nix pins${CODEX_VERSION:+ for $CODEX_VERSION}" \
+                --body-file "$pr_body" 2>"$pr_error"; then
+              pr_url=""
+            fi
           fi
 
-          echo "Opened or updated refresh PR: $pr_url"
+          if [ -n "$pr_url" ]; then
+            echo "Opened or updated refresh PR: $pr_url"
+          else
+            pr_error_summary="$(tr '\n' ' ' <"$pr_error" | sed 's/%/%25/g; s/\r/%0D/g; s/\n/%0A/g')"
+            echo "::warning title=Nix refresh PR not created::${pr_error_summary:-gh pr create/edit failed}"
+            {
+              echo "## Nix refresh branch ready"
+              echo ""
+              echo "- Branch: \`$REFRESH_BRANCH\`"
+              echo "- PR creation/edit was blocked by repository or token policy."
+              echo "- The branch was pushed after the Nix package-output verification succeeded."
+              echo ""
+              cat "$pr_body"
+            } >>"$GITHUB_STEP_SUMMARY"
+          fi
 
           # Branch pushes made with GITHUB_TOKEN do not trigger normal push/PR
           # workflows. Dispatch CI explicitly so required checks attach to the
           # bot branch head SHA and the PR can satisfy the repository ruleset.
-          gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref "$REFRESH_BRANCH"
+          if ! gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref "$REFRESH_BRANCH"; then
+            echo "::warning title=Refresh branch CI dispatch failed::Run CI manually for $REFRESH_BRANCH before merging."
+          fi
