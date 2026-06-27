@@ -1,0 +1,18 @@
+# Review ownership for the Codex Desktop Linux port.
+
+* @rabesss
+
+/release/ @rabesss
+/.github/ @rabesss
+/scripts/ci/ @rabesss
+/updater/ @rabesss
+/packaging/ @rabesss
+/scripts/patches/ @rabesss
+/scripts/patch-linux-window-ui.js @rabesss
+/scripts/patch-linux-window-ui.test.js @rabesss
+/linux-features/ @rabesss
+/computer-use-linux/ @rabesss
+/docs/ @rabesss
+/README.md @rabesss
+/RELEASING.md @rabesss
+/SECURITY.md @rabesss

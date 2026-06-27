@@ -271,8 +271,39 @@ test("Linux safe monospace font stack patch accepts upstream-safe stacks", () =>
   assert.deepEqual(warnings, []);
 });
 
+test("Linux safe monospace font stack patch updates current settings option stacks", () => {
+  const source =
+    "var fonts=[{label:`Mono`,value:`ui-monospace, SFMono-Regular, \"SF Mono\", Menlo, Consolas, monospace`}];";
+  const patched = applyPatchTwice(applyLinuxSafeMonospaceFontStackPatch, source);
+
+  assert.match(patched, /"Noto Sans Mono", "DejaVu Sans Mono", "Liberation Mono", "Ubuntu Mono"/);
+  assert.doesNotMatch(patched, /value:`ui-monospace, SFMono-Regular/);
+});
+
+test("Linux safe monospace font stack patch ignores unrelated CSS grammar bundles", () => {
+  const source =
+    "var e={match:`(?i:ui-monospace|sans-serif|serif|monospace)(?![-\\\\w])`};export{e as css};";
+  const { value, warnings } = captureWarns(() =>
+    applyLinuxSafeMonospaceFontStackPatch(source),
+  );
+
+  assert.equal(value, source);
+  assert.deepEqual(warnings, []);
+});
+
+test("Linux safe monospace font stack patch accepts theme code font stacks without generic fallback", () => {
+  const source =
+    "var theme={fonts:{code:`\"Geist Mono\", ui-monospace, \"SFMono-Regular\"`,ui:`Geist, Inter`}};";
+  const { value, warnings } = captureWarns(() =>
+    applyLinuxSafeMonospaceFontStackPatch(source),
+  );
+
+  assert.equal(value, source);
+  assert.deepEqual(warnings, []);
+});
+
 test("Linux safe monospace font stack patch warns when the unsafe stack drifts", () => {
-  const source = "var e=buildFontStack(`ui-monospace`,`monospace`);export{e as t};";
+  const source = "var e=buildFontStack(`ui-monospace`,`SFMono-Regular`,`monospace`);export{e as t};";
   const { value, warnings } = captureWarns(() =>
     applyLinuxSafeMonospaceFontStackPatch(source),
   );
@@ -368,10 +399,25 @@ test("subagent nickname metadata patch accepts session metadata shape", () => {
   });
 });
 
+test("subagent nickname metadata patch ignores unrelated agent nickname consumers", () => {
+  const source =
+    "function label(e){return e.agentNickname??e.source?.agentNickname??null}";
+  const { value, warnings } = captureWarns(() =>
+    applySubagentNicknameMetadataPatch(source),
+  );
+
+  assert.equal(value, source);
+  assert.deepEqual(warnings, []);
+});
+
 test("subagent metadata descriptor targets the Electron 42 thread context chunk", () => {
   const [descriptor] = require("./patches/core/all-linux/webview/subagent-metadata/patch.js");
 
   assert.match("thread-context-inputs-D5uMjcUB.js", descriptor.pattern);
+  assert.match(
+    "app-initial~app-main~remote-conversation-page~plugin-detail-page~new-thread-panel-page~appg~ijdupmx5-CdYgxe-b.js",
+    descriptor.pattern,
+  );
 });
 
 test("Linux target context parses distro, package, and desktop details", () => {
@@ -812,7 +858,8 @@ test("fast-mode guard descriptor follows upstream service-tier bundle names", ()
   assert.ok(descriptor.pattern.test("read-service-tier-for-request-BJ8QN0Q7.js"));
   assert.ok(descriptor.pattern.test("use-service-tier-settings-DFXPADNF.js"));
   assert.ok(descriptor.pattern.test("app-server-manager-signals-BOGyjFm3.js"));
-  assert.equal(descriptor.pattern.test("service-tier-icons-CsNhab5W.js"), false);
+  assert.ok(descriptor.pattern.test("service-tier-icons-CsNhab5W.js"));
+  assert.ok(descriptor.pattern.test("app-initial~app-main~onboarding-page~profile-QLPeiknY.js"));
 });
 
 function trayBundleFixture() {
@@ -4476,6 +4523,18 @@ test("preserves real Electron Owl feature binding when available", () => {
 
   assert.equal(sandbox.enabled, true);
   assert.equal(sandbox.disabled, false);
+});
+
+test("accepts upstream Owl null fallback when the binding is unavailable", () => {
+  const source =
+    "var Ve=`electron_common_owl_features`,Ge={parse:e=>e};function st(e){return String(e?.message??e).includes(`No such binding was linked`)}function Qe(){let e=process._linkedBinding;if(typeof e!=`function`)return null;let t;try{t=e.call(process,Ve)}catch(e){if(st(e))return null;throw e}return Ge.parse(t)}";
+
+  const { value, warnings } = captureWarns(() =>
+    applyLinuxOwlFeatureBindingFallbackPatch(source),
+  );
+
+  assert.equal(value, source);
+  assert.deepEqual(warnings, []);
 });
 
 test("patches Electron Owl feature binding fallback outside the main bundle", () => {

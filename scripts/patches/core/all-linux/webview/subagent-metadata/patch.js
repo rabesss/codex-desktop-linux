@@ -10,7 +10,7 @@ module.exports = [
     phase: "webview-asset",
     order: 1050,
     ciPolicy: "required-upstream",
-    pattern: /^(?:app-server-manager-signals|thread-context-inputs)-.*\.js$/,
+    pattern: /\.js$/,
     missingDescription: "app-server manager or thread context webview bundle",
     skipDescription: "subagent nickname metadata shape patch",
     apply: applySubagentNicknameMetadataPatch,

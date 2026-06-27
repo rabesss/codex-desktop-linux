@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Supported versions and validation
+    url: https://github.com/rabesss/codex-linux/blob/main/SUPPORTED.md
+    about: Check the approved upstream app pin, CI validation state, and support contract.
+  - name: Security report
+    url: https://github.com/rabesss/codex-linux/security/advisories/new
+    about: Report vulnerabilities privately. Do not file public issues with secrets.

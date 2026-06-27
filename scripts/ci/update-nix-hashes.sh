@@ -161,7 +161,7 @@ main() {
         echo "WARN: Could not read upstream appcast version from $APPCAST_URL; continuing with Codex.dmg pins." >&2
     fi
 
-    WRITE_PINS=1 APPCAST_URL= "$REPO_DIR/scripts/ci/validate-nix-pins.sh" "$UPSTREAM_DMG_PATH"
+    WRITE_PINS=1 APPCAST_URL="" "$REPO_DIR/scripts/ci/validate-nix-pins.sh" "$UPSTREAM_DMG_PATH"
 
     # If the Electron pin moved, refresh its fixed-output hashes so the verify
     # build does not fail on the new download URLs.

@@ -1,0 +1,136 @@
+name: Upstream Approval Heartbeat
+
+on:
+  schedule:
+    - cron: "15 7 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: upstream-approval-heartbeat
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_DMG_URL: https://persistent.oaistatic.com/codex-app-prod/Codex.dmg
+  ISSUE_TITLE: Upstream Codex DMG metadata differs from approved pin
+
+jobs:
+  heartbeat:
+    name: Check approved upstream metadata
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Validate committed support metadata
+        run: |
+          set -euo pipefail
+          node scripts/ci/validate-upstream-dmg-lock.js release/upstream-dmg-lock.json
+          node scripts/ci/render-supported-md.js --check
+
+      - name: Capture live upstream headers
+        id: live
+        run: |
+          set -euo pipefail
+          headers="$RUNNER_TEMP/upstream.headers"
+          curl -fsSLI "$UPSTREAM_DMG_URL" > "$headers"
+          last_modified="$(awk 'BEGIN{IGNORECASE=1} /^last-modified:/ {sub(/\r$/,""); sub(/^[^:]+: /,""); print; exit}' "$headers")"
+          etag="$(awk 'BEGIN{IGNORECASE=1} /^etag:/ {sub(/\r$/,""); sub(/^[^:]+: /,""); gsub(/"/,""); print; exit}' "$headers")"
+          content_length="$(awk 'BEGIN{IGNORECASE=1} /^content-length:/ {sub(/\r$/,""); sub(/^[^:]+: /,""); print; exit}' "$headers")"
+          {
+            echo "last_modified=${last_modified:-unknown}"
+            echo "etag=${etag:-unknown}"
+            echo "content_length=${content_length:-unknown}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Compare with approved lock
+        id: compare
+        env:
+          LIVE_CONTENT_LENGTH: ${{ steps.live.outputs.content_length }}
+          LIVE_ETAG: ${{ steps.live.outputs.etag }}
+          LIVE_LAST_MODIFIED: ${{ steps.live.outputs.last_modified }}
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const fs = require("node:fs");
+          const lock = JSON.parse(fs.readFileSync("release/upstream-dmg-lock.json", "utf8"));
+          const approved = lock.approved;
+          const liveSize = Number.parseInt(process.env.LIVE_CONTENT_LENGTH || "", 10);
+          const sizeDiffers = Number.isSafeInteger(liveSize) && liveSize > 0 && liveSize !== approved.size;
+          const etagDiffers = approved.etag != null && process.env.LIVE_ETAG !== approved.etag;
+          const lastModifiedDiffers = approved.last_modified != null && process.env.LIVE_LAST_MODIFIED !== approved.last_modified;
+          const differs = sizeDiffers || etagDiffers || lastModifiedDiffers;
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `differs=${differs ? "true" : "false"}\n`);
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `approved_version=${approved.upstream_app_version}\n`);
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `approved_size=${approved.size}\n`);
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `approved_sha=${approved.sha256}\n`);
+          NODE
+
+      - name: Open or update drift issue
+        if: steps.compare.outputs.differs == 'true'
+        uses: actions/github-script@v7
+        env:
+          APPROVED_VERSION: ${{ steps.compare.outputs.approved_version }}
+          APPROVED_SIZE: ${{ steps.compare.outputs.approved_size }}
+          APPROVED_SHA: ${{ steps.compare.outputs.approved_sha }}
+          LIVE_CONTENT_LENGTH: ${{ steps.live.outputs.content_length }}
+          LIVE_ETAG: ${{ steps.live.outputs.etag }}
+          LIVE_LAST_MODIFIED: ${{ steps.live.outputs.last_modified }}
+        with:
+          script: |
+            const title = process.env.ISSUE_TITLE;
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const body = [
+              "The live official Codex DMG metadata differs from the approved default update pin.",
+              "",
+              "This is not an approval and does not upload or redistribute the DMG.",
+              "",
+              "| Field | Value |",
+              "| --- | --- |",
+              `| Approved app version | \`${process.env.APPROVED_VERSION}\` |`,
+              `| Approved SHA256 | \`${process.env.APPROVED_SHA}\` |`,
+              `| Approved size | \`${process.env.APPROVED_SIZE}\` |`,
+              `| Live Content-Length | \`${process.env.LIVE_CONTENT_LENGTH}\` |`,
+              `| Live ETag | \`${process.env.LIVE_ETAG}\` |`,
+              `| Live Last-Modified | \`${process.env.LIVE_LAST_MODIFIED}\` |`,
+              `| Heartbeat run | ${runUrl} |`,
+              "",
+              "Next step: run or inspect the Upstream DMG Watcher for patch validation and candidate evidence.",
+            ].join("\n");
+            const { data: issues } = await github.rest.issues.listForRepo({
+              ...context.repo,
+              state: "open",
+              per_page: 100,
+            });
+            const existing = issues.find((issue) => issue.title === title);
+            if (existing) {
+              await github.rest.issues.update({ ...context.repo, issue_number: existing.number, body });
+            } else {
+              await github.rest.issues.create({ ...context.repo, title, body });
+            }
+
+      - name: Auto-close drift issue on recovery
+        if: steps.compare.outputs.differs != 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = process.env.ISSUE_TITLE;
+            const { data: issues } = await github.rest.issues.listForRepo({
+              ...context.repo,
+              state: "open",
+              per_page: 100,
+            });
+            for (const issue of issues.filter((item) => item.title === title)) {
+              await github.rest.issues.createComment({
+                ...context.repo,
+                issue_number: issue.number,
+                body: `Heartbeat recovered at ${new Date().toISOString()}; approved metadata matches the live headers checked by this workflow.`,
+              });
+              await github.rest.issues.update({ ...context.repo, issue_number: issue.number, state: "closed" });
+            }

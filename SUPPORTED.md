@@ -10,6 +10,9 @@ CI checks this file on every push and pull request. Scheduled/manual workflows o
 
 [![CI](https://github.com/rabesss/codex-linux/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/rabesss/codex-linux/actions/workflows/ci.yml)
 [![Upstream DMG Watcher](https://github.com/rabesss/codex-linux/actions/workflows/upstream-build-app.yml/badge.svg?branch=main)](https://github.com/rabesss/codex-linux/actions/workflows/upstream-build-app.yml)
+[![Upstream Approval Heartbeat](https://github.com/rabesss/codex-linux/actions/workflows/upstream-approval-heartbeat.yml/badge.svg?branch=main)](https://github.com/rabesss/codex-linux/actions/workflows/upstream-approval-heartbeat.yml)
+[![Shellcheck](https://github.com/rabesss/codex-linux/actions/workflows/shellcheck.yml/badge.svg?branch=main)](https://github.com/rabesss/codex-linux/actions/workflows/shellcheck.yml)
+[![Codespell](https://github.com/rabesss/codex-linux/actions/workflows/codespell.yml/badge.svg?branch=main)](https://github.com/rabesss/codex-linux/actions/workflows/codespell.yml)
 [![Install Dependencies](https://github.com/rabesss/codex-linux/actions/workflows/install-deps.yml/badge.svg?branch=main)](https://github.com/rabesss/codex-linux/actions/workflows/install-deps.yml)
 [![Populate Cachix](https://github.com/rabesss/codex-linux/actions/workflows/cachix.yml/badge.svg?branch=main)](https://github.com/rabesss/codex-linux/actions/workflows/cachix.yml)
 

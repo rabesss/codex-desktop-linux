@@ -8,7 +8,7 @@ module.exports = [
     phase: "webview-asset",
     order: 1045,
     ciPolicy: "required-upstream",
-    pattern: /^font-settings-.*\.js$/,
+    pattern: /\.js$/,
     missingDescription: "font settings bundle",
     skipDescription: "Linux monospace font stack patch",
     apply: applyLinuxSafeMonospaceFontStackPatch,

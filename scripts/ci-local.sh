@@ -96,26 +96,26 @@ image_key_for_job() {
 }
 
 mount_github_summary_args() {
-    local -n _args="$1"
+    local -n summary_args_ref="$1"
     if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
         local summary_dir
         summary_dir="$(dirname "$GITHUB_STEP_SUMMARY")"
         mkdir -p "$summary_dir"
-        _args+=(-e "GITHUB_STEP_SUMMARY=$GITHUB_STEP_SUMMARY" -v "$summary_dir:$summary_dir")
+        summary_args_ref+=(-e "GITHUB_STEP_SUMMARY=$GITHUB_STEP_SUMMARY" -v "$summary_dir:$summary_dir")
     fi
 }
 
 mount_upstream_args() {
-    local -n _args="$1"
+    local -n upstream_args_ref="$1"
     local upstream_dir="/tmp/codex-upstream-ci"
     mkdir -p "$upstream_dir"
-    _args+=(-v "$upstream_dir:$upstream_dir")
+    upstream_args_ref+=(-v "$upstream_dir:$upstream_dir")
 
     if [ -n "${CI_DMG_PATH:-}" ] && [ "${CI_DMG_PATH#/}" != "$CI_DMG_PATH" ]; then
         local dmg_dir
         dmg_dir="$(dirname "$CI_DMG_PATH")"
         mkdir -p "$dmg_dir"
-        _args+=(-v "$dmg_dir:$dmg_dir")
+        upstream_args_ref+=(-v "$dmg_dir:$dmg_dir")
     fi
 }
 

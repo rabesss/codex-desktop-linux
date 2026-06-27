@@ -37,7 +37,7 @@ map_arch() {
 	esac
 }
 
-# Arch pkgver may contain '+', so keep the caller-provided commitish suffix in
+# Arch pkgver may contain '+', so keep the caller-provided commit-like suffix in
 # pkgver. pkgrel is reserved for distro/package rebuilds of the same upstream
 # app version.
 pacman_version_parts() {

@@ -1,0 +1,74 @@
+name: Bug Report
+description: Report a Codex Desktop Linux wrapper, packaging, updater, or integration bug.
+title: "[bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not paste API keys, tokens, request dumps, private model catalogs, or unredacted logs.
+        This repository does not provide official OpenAI support; report account/API issues to OpenAI.
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Doctor output
+      description: Run `codex-desktop-doctor --json` when possible. Plain `codex-desktop-doctor` output is also acceptable.
+      render: shell
+    validations:
+      required: true
+  - type: dropdown
+    id: package-format
+    attributes:
+      label: Package format
+      options:
+        - deb
+        - rpm
+        - pacman
+        - AppImage self-build
+        - Nix
+        - source checkout
+        - other
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Distribution and desktop
+      description: Example: Fedora 42 + GNOME Wayland, Arch + Hyprland, Ubuntu 24.04 + KDE X11.
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: Describe the bug and the visible failure.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Include exact commands, updater actions, or UI path.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What should have happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: updater
+    attributes:
+      label: Updater state
+      description: If relevant, paste `codex-update-manager status --json` with private paths and secrets redacted.
+      render: shell
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or screenshots
+      description: Add redacted logs, patch reports, or screenshots that help reproduce the issue.
+    validations:
+      required: false

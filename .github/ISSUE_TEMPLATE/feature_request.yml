@@ -1,0 +1,43 @@
+name: Feature Request
+description: Propose a Linux wrapper, packaging, updater, or optional feature improvement.
+title: "[feature]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Optional or workflow-specific integrations usually belong under `linux-features/`
+        and should be disabled by default.
+  - type: textarea
+    id: request
+    attributes:
+      label: What would you like?
+      description: Describe the requested behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: use-case
+    attributes:
+      label: Use case
+      description: Who needs this, and what problem does it solve?
+    validations:
+      required: true
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Likely scope
+      options:
+        - core Linux compatibility
+        - optional linux-features module
+        - packaging
+        - updater
+        - documentation
+        - unsure
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives or workarounds
+      description: Mention existing settings, local features, or external tools you already tried.
+    validations:
+      required: false

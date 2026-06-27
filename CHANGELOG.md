@@ -7,6 +7,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- Added public maintenance docs and intake surfaces: `RELEASING.md`,
+  `SECURITY.md`, `docs/index.md`, `docs/decisions.md`, CODEOWNERS, and issue
+  templates that request diagnostics without secrets.
+- Added separate Shellcheck and Codespell workflows for maintained automation
+  and public documentation surfaces.
+- Added package artifact smoke tests that extract built Debian, RPM, and pacman
+  fixture packages and verify installed entrypoints, updater metadata, and
+  `codex-desktop-doctor` readiness.
+- Added an upstream approval heartbeat workflow and a manual promotion PR
+  workflow for metadata-only Codex DMG approvals without redistributing app
+  payloads.
 - Added `scripts/custom-model-catalog-setup.js`, a safe direct/local provider
   setup helper that creates or updates `$CODEX_HOME/custom-models.json`, prints
   the matching official Codex `[model_providers.<id>]` config snippet, refuses
@@ -88,6 +99,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   rendering is unstable.
 ### Fixed
 
+- Updated patch descriptors and tests for current upstream bundle drift in
+  fast-mode guard, font stack, subagent metadata, and Electron Owl fallback
+  handling.
+- Fixed Shellcheck findings in maintained package and CI scripts, including the
+  Nix pin refresh environment assignment.
 - First-run API-key login validation now rejects malformed or fake keys before
   the wizard advances or writes Codex auth state.
 - First-run runtime/plugin reconciliation is hardened for packaged installs

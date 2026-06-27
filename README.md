@@ -19,6 +19,7 @@ and review records.
 | Check what upstream app version and package paths are supported | [SUPPORTED.md](SUPPORTED.md) |
 | Check the installed app | `codex-desktop-doctor` or `codex-desktop-doctor --json` |
 | See current CI validation state | The live badges and workflow links in [SUPPORTED.md](SUPPORTED.md) |
+| Find maintenance docs, release rules, and security reporting | [docs/index.md](docs/index.md) |
 
 The normal first install is:
 

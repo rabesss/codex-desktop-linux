@@ -31,7 +31,11 @@ normalize_linux_features_config_path() {
     [ -n "$configured_path" ] || return 0
     case "$configured_path" in
         /*) ;;
-        *) export CODEX_LINUX_FEATURES_CONFIG="$(realpath -m -- "$PWD/$configured_path")" ;;
+        *)
+            local normalized_path
+            normalized_path="$(realpath -m -- "$PWD/$configured_path")"
+            export CODEX_LINUX_FEATURES_CONFIG="$normalized_path"
+            ;;
     esac
 }
 

@@ -1149,6 +1149,12 @@ function applyLinuxOwlFeatureBindingFallbackPatch(currentSource) {
     return currentSource;
   }
 
+  const upstreamNullFallbackRegex =
+    /function [A-Za-z_$][\w$]*\(\)\{let ([A-Za-z_$][\w$]*)=process\._linkedBinding;if\(typeof \1!=`function`\)return null;let ([A-Za-z_$][\w$]*);try\{\2=\1\.call\(process,[A-Za-z_$][\w$]*\)\}catch\(([A-Za-z_$][\w$]*)\)\{if\([A-Za-z_$][\w$]*\(\3\)\)return null;throw \3\}return [A-Za-z_$][\w$]*\.parse\(\2\)\}/u;
+  if (upstreamNullFallbackRegex.test(currentSource)) {
+    return currentSource;
+  }
+
   const loaderRegex =
     /function ([A-Za-z_$][\w$]*)\(\)\{let ([A-Za-z_$][\w$]*)=process\._linkedBinding;if\(typeof \2!=`function`\)throw Error\(`Owl feature binding is unavailable`\);return ([A-Za-z_$][\w$]*)\.parse\(\2\.call\(process,`electron_common_owl_features`\)\)\}/u;
   const match = currentSource.match(loaderRegex);

@@ -1,0 +1,3 @@
+[codespell]
+skip = .git,codex-app,codex-app-next,dist,dist-next,target,node_modules,flake.lock,package-lock.json
+ignore-words-list = ser,crate,ba

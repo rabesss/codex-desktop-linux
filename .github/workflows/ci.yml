@@ -116,6 +116,9 @@ jobs:
             echo "- Verified updater binary, user service, update-builder bundle, and packaged runtime helper."
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Smoke test Debian package artifact
+        run: tests/test-package-artifact.sh deb dist
+
   nix:
     name: Nix Metadata
     runs-on: ubuntu-latest
@@ -167,7 +170,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y rpm
+          sudo apt-get install -y cpio rpm
           rpmbuild --version
 
       - name: Create minimal packaged app fixture
@@ -197,6 +200,9 @@ jobs:
             echo "- Built: \`$(basename "$rpm_file")\`"
             echo "- Verified updater binary, user service, update-builder bundle, and packaged runtime helper."
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Smoke test RPM package artifact
+        run: tests/test-package-artifact.sh rpm dist
 
   package-pacman:
     name: Build Pacman Package
@@ -235,6 +241,7 @@ jobs:
                 grep -q "opt/codex-desktop/update-builder/install.sh" /tmp/pacman-contents.txt
                 grep -q "opt/codex-desktop/update-builder/release/upstream-dmg-lock.json" /tmp/pacman-contents.txt
                 grep -q "opt/codex-desktop/.codex-linux/codex-packaged-runtime.sh" /tmp/pacman-contents.txt
+                tests/test-package-artifact.sh pacman dist
                 printf "%s\n" "$(basename "$pkg_file")" > /tmp/pacman-package-name.txt
               '"'"'
               cp /tmp/pacman-package-name.txt /work/.pacman-package-name.txt

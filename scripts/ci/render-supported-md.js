@@ -24,6 +24,21 @@ const WORKFLOWS = [
     validates: "Scheduled/manual live upstream DMG patch/build validation and metadata-only candidate or drift reports",
   },
   {
+    label: "Upstream Approval Heartbeat",
+    file: "upstream-approval-heartbeat.yml",
+    validates: "Scheduled/manual metadata heartbeat for approved upstream DMG pins",
+  },
+  {
+    label: "Shellcheck",
+    file: "shellcheck.yml",
+    validates: "Maintained shell entrypoints and packaging scripts",
+  },
+  {
+    label: "Codespell",
+    file: "codespell.yml",
+    validates: "Public docs and source spelling checks",
+  },
+  {
     label: "Install Dependencies",
     file: "install-deps.yml",
     validates: "Dependency bootstrap behavior on supported apt images",

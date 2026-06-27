@@ -100,7 +100,16 @@ function applyLinuxSafeMonospaceFontStackPatch(currentSource) {
     );
   }
 
-  if (currentSource.includes("ui-monospace") && currentSource.includes("monospace")) {
+  const unsafeSettingsStack = "ui-monospace, SFMono-Regular, \"SF Mono\", Menlo, Consolas, monospace";
+  if (currentSource.includes(unsafeSettingsStack)) {
+    return currentSource.replaceAll(unsafeSettingsStack, LINUX_SAFE_MONOSPACE_FONT_STACK);
+  }
+
+  if (
+    currentSource.includes("ui-monospace") &&
+    currentSource.includes("SFMono-Regular") &&
+    /(^|[^-A-Za-z])monospace\b/u.test(currentSource)
+  ) {
     console.warn(
       "WARN: Could not find Linux monospace font stack insertion point — skipping default font stack patch",
     );
@@ -620,11 +629,9 @@ function applySubagentNicknameMetadataPatch(currentSource) {
   } else if (patchedSource.includes(sourceShapeNeedle)) {
     patchedSource = patchedSource.replace(sourceShapeNeedle, sourceShapePatch);
   } else {
-    const sourceShapeRegex =
-      /function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\)\{return`subAgent`in \2\?\2\.subAgent:null\}function ([A-Za-z_$][\w$]*)\(/u;
-    if (sourceShapeRegex.test(patchedSource)) {
+    if (subagentSourceShapeRegex().test(patchedSource)) {
       patchedSource = patchedSource.replace(
-        sourceShapeRegex,
+        subagentSourceShapeRegex(),
         "function $1($2){return`subAgent`in $2?$2.subAgent:`subagent`in $2?$2.subagent:null}function $3(",
       );
     }
@@ -639,27 +646,37 @@ function applySubagentNicknameMetadataPatch(currentSource) {
   } else if (patchedSource.includes(nicknameNeedle)) {
     patchedSource = patchedSource.replace(nicknameNeedle, nicknamePatch);
   } else {
-    const nicknameRegex =
-      /function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\)\{return \2==null\?null:([A-Za-z_$][\w$]*)\(\2\.agentNickname\)\?\?\3\(([A-Za-z_$][\w$]*)\(\2\.source\)\?\.agentNickname\)\}/u;
-    if (nicknameRegex.test(patchedSource)) {
+    if (subagentNicknameRegex().test(patchedSource)) {
       patchedSource = patchedSource.replace(
-        nicknameRegex,
+        subagentNicknameRegex(),
         "function $1($2){return $2==null?null:$3($2.agentNickname)??$3($2.agent_nickname)??$3($4($2.source)?.agentNickname)}",
       );
     }
   }
 
+  const hasPatchableSubagentMetadata =
+    currentSource.includes(sourceShapeNeedle) ||
+    subagentSourceShapeRegex().test(currentSource) ||
+    currentSource.includes(nicknameNeedle) ||
+    subagentNicknameRegex().test(currentSource) ||
+    currentSource.includes("thread_spawn");
   if (
     patchedSource === currentSource &&
     !(currentSource.includes(sourceShapePatchedMarker) && currentSource.includes(nicknamePatchedMarker)) &&
-    (currentSource.includes("agentNickname") ||
-      currentSource.includes("agent_nickname") ||
-      currentSource.includes("thread_spawn"))
+    hasPatchableSubagentMetadata
   ) {
     console.warn("WARN: Could not find subagent nickname metadata needles — skipping metadata shape patch");
   }
 
   return patchedSource;
+}
+
+function subagentSourceShapeRegex() {
+  return /function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\)\{return`subAgent`in \2\?\2\.subAgent:null\}function ([A-Za-z_$][\w$]*)\(/u;
+}
+
+function subagentNicknameRegex() {
+  return /function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\)\{return \2==null\?null:([A-Za-z_$][\w$]*)\(\2\.agentNickname\)\?\?\3\(([A-Za-z_$][\w$]*)\(\2\.source\)\?\.agentNickname\)\}/u;
 }
 
 function applyLocalEnvironmentActionModalDraftPatch(currentSource) {

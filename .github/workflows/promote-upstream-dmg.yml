@@ -1,0 +1,114 @@
+name: Promote Upstream DMG Lock
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_manifest_json:
+        description: Paste the metadata-only upstream-dmg-candidate.json content.
+        required: true
+        type: string
+      approved_by:
+        description: Public-safe approver label.
+        required: false
+        default: manual
+        type: string
+      notes:
+        description: Public-safe promotion notes.
+        required: false
+        default: Passed maintainer review and local dogfood.
+        type: string
+      branch:
+        description: Branch to create or update.
+        required: false
+        default: codex/promote-upstream-dmg
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: promote-upstream-dmg
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    name: Open promotion PR
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Write candidate manifest
+        env:
+          CANDIDATE_MANIFEST_JSON: ${{ inputs.candidate_manifest_json }}
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$CANDIDATE_MANIFEST_JSON" > "$RUNNER_TEMP/upstream-dmg-candidate.json"
+          node -e 'JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"))' \
+            "$RUNNER_TEMP/upstream-dmg-candidate.json"
+
+      - name: Promote lock and regenerate support docs
+        run: |
+          set -euo pipefail
+          node scripts/ci/promote-upstream-dmg-lock.js \
+            release/upstream-dmg-lock.json \
+            --from-candidate-manifest "$RUNNER_TEMP/upstream-dmg-candidate.json" \
+            --repo-dir "$PWD" \
+            --approved-by "${{ inputs.approved_by }}" \
+            --notes "${{ inputs.notes }}"
+          node scripts/ci/validate-upstream-dmg-lock.js release/upstream-dmg-lock.json
+          node scripts/ci/render-supported-md.js --output SUPPORTED.md
+
+      - name: Open or update pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PROMOTION_BRANCH: ${{ inputs.branch }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- release/upstream-dmg-lock.json SUPPORTED.md; then
+            echo "No promotion diff produced."
+            exit 0
+          fi
+
+          version="$(node -e 'const lock=require("./release/upstream-dmg-lock.json"); process.stdout.write(lock.approved.upstream_app_version)')"
+          sha="$(node -e 'const lock=require("./release/upstream-dmg-lock.json"); process.stdout.write(lock.approved.sha256.slice(0,12))')"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$PROMOTION_BRANCH"
+          git add release/upstream-dmg-lock.json SUPPORTED.md
+          git commit -m "chore: promote upstream Codex DMG ${version}"
+          git push --force-with-lease origin "$PROMOTION_BRANCH"
+
+          body="$RUNNER_TEMP/promotion-pr.md"
+          cat > "$body" <<EOF
+          ## Summary
+          - promote approved upstream Codex Desktop DMG pin to \`${version}\`
+          - approved SHA256 prefix: \`${sha}\`
+          - regenerate \`SUPPORTED.md\`
+
+          ## Required Manual Checks
+          - [ ] no public artifact contains a DMG, extracted app, generated app payload, AppImage, or native package with OpenAI app code
+          - [ ] candidate patch validation passed
+          - [ ] local package rebuild and dogfood passed
+          - [ ] official OpenAI/Codex routing remains direct
+          EOF
+
+          pr_url="$(gh pr list --base main --head "$PROMOTION_BRANCH" --state open --json url --jq '.[0].url // ""')"
+          if [[ -z "$pr_url" ]]; then
+            gh pr create \
+              --base main \
+              --head "$PROMOTION_BRANCH" \
+              --title "chore: promote upstream Codex DMG ${version}" \
+              --body-file "$body"
+          else
+            gh pr edit "$pr_url" \
+              --title "chore: promote upstream Codex DMG ${version}" \
+              --body-file "$body"
+          fi
