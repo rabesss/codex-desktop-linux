@@ -393,7 +393,7 @@ bootstrap_7zz() {
     local version="" url="" candidate_url
     for candidate in "${versions[@]}"; do
         candidate_url="https://www.7-zip.org/a/7z${candidate}-linux-${sevenzip_arch}.tar.xz"
-        if curl -fsI "$candidate_url" >/dev/null 2>&1; then
+        if curl -fsI --retry 3 --retry-delay 2 --retry-all-errors "$candidate_url" >/dev/null 2>&1; then
             version="$candidate"
             url="$candidate_url"
             break
@@ -412,7 +412,7 @@ Install 7zz manually from https://www.7-zip.org/download.html and ensure it is o
     trap "rm -rf '$tmpdir'" EXIT
 
     info "Downloading 7zz ${version} from $url"
-    curl -fL --progress-bar -o "$tmpdir/7z.tar.xz" "$url"
+    curl -fL --retry 5 --retry-delay 2 --retry-all-errors --progress-bar -o "$tmpdir/7z.tar.xz" "$url"
     tar -C "$tmpdir" -xf "$tmpdir/7z.tar.xz" 7zz
 
     if [ "$install_dir" = "/usr/local/bin" ]; then

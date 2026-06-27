@@ -31,7 +31,7 @@ find_one() {
         echo "No artifact matching $pattern in $artifact_dir" >&2
         exit 1
     }
-    printf '%s\n' "$found"
+    readlink -f "$found"
 }
 
 case "$format" in
