@@ -66,6 +66,7 @@ const {
 const {
   applyBrowserUseNodeReplApprovalPatch,
   applyLinuxBuildInfoTrayPatch,
+  applyLinuxBundledCodexCliResolverPatch,
   applyLinuxChromeExtensionStatusPatch,
   applyLinuxDesktopBrowserMcpDefaultsPatch,
   applyLinuxExplicitIpcQuitPatch,
@@ -180,6 +181,7 @@ module.exports = {
   applyLinuxAvatarOverlayMousePassthroughPatch,
   applyLinuxBrowserUseIabVisibleOnCreatePatch,
   applyLinuxBuildInfoTrayPatch,
+  applyLinuxBundledCodexCliResolverPatch,
   applyLinuxChromeExtensionStatusPatch,
   applyLinuxChromeNativeHostRuntimePatch,
   applyLinuxChromePluginAutoInstallPatch,

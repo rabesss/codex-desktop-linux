@@ -908,6 +908,74 @@ function applyLinuxDesktopBrowserMcpDefaultsPatch(currentSource) {
   return patchedSource;
 }
 
+function applyLinuxBundledCodexCliResolverPatch(currentSource) {
+  const currentResolverCandidates =
+    "t?.resourcesPath&&(n.push((0,r.join)(t.resourcesPath,a)),n.push((0,r.join)(t.resourcesPath,`app.asar.unpacked`,a)))";
+  const patchedResolverCandidates =
+    "t?.resourcesPath&&(n.push((0,r.join)(t.resourcesPath,`bin`,a)),n.push((0,r.join)(t.resourcesPath,a)),n.push((0,r.join)(t.resourcesPath,`app.asar.unpacked`,a)))";
+
+  if (currentSource.includes(patchedResolverCandidates)) {
+    return currentSource;
+  }
+
+  if (currentSource.includes(currentResolverCandidates)) {
+    return currentSource.split(currentResolverCandidates).join(patchedResolverCandidates);
+  }
+
+  if (
+    currentSource.includes("Unable to locate the Codex CLI binary") &&
+    currentSource.includes("app.asar.unpacked")
+  ) {
+    console.warn(
+      "WARN: Could not find bundled Codex CLI resolver candidate list - skipping Linux CLI resolver patch",
+    );
+  }
+  return currentSource;
+}
+
+function patchLinuxBundledCodexCliResolverAssets(extractedDir) {
+  const buildDir = path.join(extractedDir, ".vite", "build");
+  if (!fs.existsSync(buildDir)) {
+    console.warn(
+      `WARN: Could not find app build directory in ${buildDir} - skipping Linux CLI resolver patch`,
+    );
+    return { matched: 0, changed: 0 };
+  }
+
+  const marker = "Unable to locate the Codex CLI binary";
+  const candidates = fs
+    .readdirSync(buildDir)
+    .filter((name) => name.endsWith(".js"))
+    .map((name) => path.join(buildDir, name))
+    .filter((candidate) => {
+      try {
+        return fs.readFileSync(candidate, "utf8").includes(marker);
+      } catch {
+        return false;
+      }
+    })
+    .sort();
+
+  if (candidates.length === 0) {
+    console.warn(
+      "WARN: Could not find bundled Codex CLI resolver bundle - skipping Linux CLI resolver patch",
+    );
+    return { matched: 0, changed: 0 };
+  }
+
+  let changed = 0;
+  for (const candidate of candidates) {
+    const currentSource = fs.readFileSync(candidate, "utf8");
+    const patchedSource = applyLinuxBundledCodexCliResolverPatch(currentSource);
+    if (patchedSource !== currentSource) {
+      fs.writeFileSync(candidate, patchedSource, "utf8");
+      changed += 1;
+    }
+  }
+
+  return { matched: candidates.length, changed };
+}
+
 function applyBrowserUseNodeReplApprovalPatch(currentSource) {
   const approvalPatch =
     "startup_timeout_sec:120,tools:{js:{approval_mode:`approve`}},env:{";
@@ -1242,6 +1310,7 @@ function applyLinuxRemoteControlConfigPreservationPatch(currentSource) {
 
 module.exports = {
   applyBrowserUseNodeReplApprovalPatch,
+  applyLinuxBundledCodexCliResolverPatch,
   applyLinuxChromeExtensionStatusPatch,
   applyLinuxDesktopBrowserMcpDefaultsPatch,
   applyLinuxExplicitIpcQuitPatch,
@@ -1261,5 +1330,6 @@ module.exports = {
   applyLinuxTrayPatch,
   applyLinuxWillQuitDrainTimeoutPatch,
   applyLinuxWindowOptionsPatch,
+  patchLinuxBundledCodexCliResolverAssets,
   patchLinuxOwlFeatureBindingFallbackAssets,
 };

@@ -30,6 +30,7 @@ const {
   applyLinuxAppUpdaterBridgePatch,
   applyLinuxAppUpdaterMenuPatch,
   applyLinuxBuildInfoTrayPatch,
+  applyLinuxBundledCodexCliResolverPatch,
   applyLinuxExplicitIpcQuitPatch,
   applyLinuxExplicitQuitPromptBypassPatch,
   applyLinuxExplicitTrayQuitPatch,
@@ -785,6 +786,7 @@ test("default core patch descriptors are grouped and unique", () => {
     "linux-tray",
     "linux-build-info-tray",
     "linux-single-instance",
+    "linux-bundled-codex-cli-resolver",
     "linux-computer-use-ui-feature",
     "linux-computer-use-plugin-gate",
     "linux-chrome-plugin-auto-install",
@@ -837,6 +839,10 @@ test("default core patch descriptors are grouped and unique", () => {
   );
   assert.equal(
     descriptors.find((descriptor) => descriptor.id === "linux-owl-feature-binding-fallback")?.phase,
+    "extracted-app",
+  );
+  assert.equal(
+    descriptors.find((descriptor) => descriptor.id === "linux-bundled-codex-cli-resolver")?.phase,
     "extracted-app",
   );
   assert.match(
@@ -973,6 +979,14 @@ function currentDesktopBrowserMcpBundleFixture() {
   return [
     "function Ve(e,{buildFlavor:t=n.P.resolve(),env:r=p.default.env,platform:i=p.default.platform}={}){let a=i===`darwin`?e:e,o=i===`win32`&&e.computerUse===!0?{...a,computerUseNodeRepl:!0}:a,s=i===`linux`?{...o,computerUse:!0,computerUseNodeRepl:!0}:i===`win32`&&r.CODEX_ELECTRON_ENABLE_WINDOWS_COMPUTER_USE===`1`?{...o,computerUse:!0,computerUseNodeRepl:!0}:o,c=null;return c==null?s:{...s,...c}}",
     "var Wn={\"features.js_repl\":!1};",
+  ].join("");
+}
+
+function currentBundledCodexCliResolverBundleFixture() {
+  return [
+    "let r=require(`node:path`);",
+    "function IR(e,t){let n=[],i=ZR();if(i){let e=pR(i);e&&n.push(e)}let a=process.platform===`win32`?`codex.exe`:`codex`;t?.resourcesPath&&(n.push((0,r.join)(t.resourcesPath,a)),n.push((0,r.join)(t.resourcesPath,`app.asar.unpacked`,a))),e&&n.push((0,r.join)(e,`extension`,`bin`,a));for(let e of n){let t=pR(e);if(t)return{executablePath:t,binDirectory:(0,r.dirname)(t)}}return null}",
+    "function ZR(){return null}function pR(){return null}",
   ].join("");
 }
 
@@ -3658,6 +3672,63 @@ test("uses Linux managed runtime paths for Electron 42 Browser Use runtime resol
     patched,
     /codexLinuxChromeNativeHostRuntimeFile\(u,\[\[r===`win32`\?`node_repl\.exe`:`node_repl`\]\]\)/,
   );
+});
+
+test("uses bundled resources/bin Codex CLI fallback for app-server resolver", () => {
+  const patched = applyPatchTwice(
+    applyLinuxBundledCodexCliResolverPatch,
+    currentBundledCodexCliResolverBundleFixture(),
+  );
+
+  assert.match(
+    patched,
+    /t\?\.resourcesPath&&\(n\.push\(\(0,r\.join\)\(t\.resourcesPath,`bin`,a\)\),n\.push\(\(0,r\.join\)\(t\.resourcesPath,a\)\),n\.push\(\(0,r\.join\)\(t\.resourcesPath,`app\.asar\.unpacked`,a\)\)\)/,
+  );
+  assert.ok(
+    patched.indexOf("(0,r.join)(t.resourcesPath,`bin`,a)") <
+      patched.indexOf("(0,r.join)(t.resourcesPath,a)"),
+  );
+});
+
+test("bundled Codex CLI resolver patch ignores unrelated resources/bin candidates", () => {
+  const unrelatedPrefix =
+    "function other(e){e?.resourcesPath&&(n.push((0,s.join)(e.resourcesPath,`bin`,a)))}";
+  const patched = applyPatchTwice(
+    applyLinuxBundledCodexCliResolverPatch,
+    `${unrelatedPrefix}${currentBundledCodexCliResolverBundleFixture()}`,
+  );
+
+  assert.match(patched, /function other\(e\)\{e\?\.resourcesPath&&\(n\.push\(\(0,s\.join\)\(e\.resourcesPath,`bin`,a\)\)\)\}/);
+  assert.match(
+    patched,
+    /t\?\.resourcesPath&&\(n\.push\(\(0,r\.join\)\(t\.resourcesPath,`bin`,a\)\),n\.push\(\(0,r\.join\)\(t\.resourcesPath,a\)\),n\.push\(\(0,r\.join\)\(t\.resourcesPath,`app\.asar\.unpacked`,a\)\)\)/,
+  );
+});
+
+test("patchExtractedApp patches bundled Codex CLI resolver chunks", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-cli-resolver-chunk-"));
+  try {
+    const buildDir = path.join(tempRoot, ".vite", "build");
+    fs.mkdirSync(buildDir, { recursive: true });
+    const target = path.join(buildDir, "src-test.js");
+    fs.writeFileSync(
+      target,
+      [
+        currentBundledCodexCliResolverBundleFixture(),
+        "class MR{async connect(){let e=NR(this.options);if(!e)throw Error(`Unable to locate the Codex CLI binary. Set CODEX_CLI_PATH or ensure the Electron resources include bin/codex.`)}}",
+      ].join(""),
+    );
+
+    const report = createPatchReport();
+    captureWarns(() => patchExtractedApp(tempRoot, { report }));
+    const patched = fs.readFileSync(target, "utf8");
+    const runtimePatch = report.patches.find((patch) => patch.name === "linux-bundled-codex-cli-resolver");
+
+    assert.match(patched, /t\?\.resourcesPath&&\(n\.push\(\(0,r\.join\)\(t\.resourcesPath,`bin`,a\)\)/);
+    assert.equal(runtimePatch.status, "applied");
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
 });
 
 test("uses Linux managed runtime paths for current Chrome plugin app-server sync", () => {
