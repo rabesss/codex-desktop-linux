@@ -28,7 +28,7 @@ post_install() {
 post_upgrade() {
     codex_desktop_post_transaction_common
     if [ -f "$SERVICE_HELPER" ]; then
-        codex_start_enabled_user_service || true
+        codex_restart_active_or_start_enabled_user_service || true
     fi
 }
 

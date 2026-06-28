@@ -242,8 +242,19 @@ pub fn refresh_approved_installed_state(
     state: &mut PersistedState,
     approved: &ApprovedUpstreamDmg,
 ) {
+    refresh_installed_wrapper_state(config, state);
     if installed_app_dmg_sha256(config).as_deref() == Some(approved.sha256.as_str()) {
         state.dmg_sha256 = Some(approved.sha256.clone());
+    }
+}
+
+fn refresh_installed_wrapper_state(config: &RuntimeConfig, state: &mut PersistedState) {
+    if let Some(installed) = wrapper::installed_wrapper_from_metadata(
+        &config.app_executable_path,
+        &config.builder_bundle_root,
+    ) {
+        state.installed_wrapper_version = installed.version;
+        state.installed_wrapper_commit = Some(installed.commit);
     }
 }
 
@@ -291,15 +302,7 @@ pub fn ensure_wrapper_minimum(
         return Ok(());
     };
 
-    if state.installed_wrapper_commit.is_none() || state.installed_wrapper_version.is_none() {
-        if let Some(installed) = wrapper::installed_wrapper_from_metadata(
-            &config.app_executable_path,
-            &config.builder_bundle_root,
-        ) {
-            state.installed_wrapper_version = installed.version;
-            state.installed_wrapper_commit = Some(installed.commit);
-        }
-    }
+    refresh_installed_wrapper_state(config, state);
 
     let Some(installed) = state.installed_wrapper_commit.as_deref() else {
         anyhow::bail!(
@@ -358,6 +361,24 @@ mod tests {
             wrapper_remote: String::new(),
             wrapper_branch: "main".to_string(),
         }
+    }
+
+    fn write_build_info(app_root: &Path, approved: &ApprovedUpstreamDmg, commit: &str) {
+        std::fs::create_dir_all(app_root.join(".codex-linux")).expect("metadata dir");
+        std::fs::write(
+            app_root.join(".codex-linux/build-info.json"),
+            serde_json::json!({
+                "upstreamDmg": {
+                    "sha256": approved.sha256,
+                },
+                "source": {
+                    "commit": commit,
+                    "version": "0.8.7",
+                }
+            })
+            .to_string(),
+        )
+        .expect("build info");
     }
 
     #[test]
@@ -428,5 +449,50 @@ mod tests {
         let state = PersistedState::new(true);
 
         assert!(approved_dmg_already_installed(&config, &state, &approved));
+    }
+
+    #[test]
+    fn refresh_approved_installed_state_updates_stale_wrapper_metadata() {
+        let approved = approved();
+        let temp = tempfile::tempdir().expect("tempdir");
+        let app_root = temp.path().join("app");
+        let current_commit = "3350c5878667599d3f1a296a40d1caf79bb76ce1";
+        write_build_info(&app_root, &approved, current_commit);
+        let config = config_with_app_executable(app_root.join("electron"));
+        let mut state = PersistedState::new(true);
+        state.installed_wrapper_version = Some("0.8.7".to_string());
+        state.installed_wrapper_commit =
+            Some("22c74b0256b39b2ab3f8a26ece9a63c785297c63".to_string());
+
+        refresh_approved_installed_state(&config, &mut state, &approved);
+
+        assert_eq!(state.dmg_sha256.as_deref(), Some(approved.sha256.as_str()));
+        assert_eq!(
+            state.installed_wrapper_commit.as_deref(),
+            Some(current_commit)
+        );
+    }
+
+    #[test]
+    fn ensure_wrapper_minimum_uses_current_metadata_over_stale_state() {
+        let mut approved = approved();
+        let temp = tempfile::tempdir().expect("tempdir");
+        let app_root = temp.path().join("app");
+        let current_commit = "3350c5878667599d3f1a296a40d1caf79bb76ce1";
+        approved.wrapper_min_commit = Some(current_commit.to_string());
+        write_build_info(&app_root, &approved, current_commit);
+        let config = config_with_app_executable(app_root.join("electron"));
+        let mut state = PersistedState::new(true);
+        state.installed_wrapper_version = Some("0.8.7".to_string());
+        state.installed_wrapper_commit =
+            Some("22c74b0256b39b2ab3f8a26ece9a63c785297c63".to_string());
+
+        ensure_wrapper_minimum(&config, &mut state, &approved)
+            .expect("current installed metadata satisfies wrapper floor");
+
+        assert_eq!(
+            state.installed_wrapper_commit.as_deref(),
+            Some(current_commit)
+        );
     }
 }

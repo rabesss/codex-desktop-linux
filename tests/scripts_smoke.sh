@@ -1379,11 +1379,12 @@ test_native_upgrade_respects_disabled_updater_service() {
     assert_contains "$helper" 'start "$SERVICE_NAME"'
     assert_contains "$helper" 'enable --now "$SERVICE_NAME"'
     assert_contains "$helper" "codex_start_enabled_user_service"
+    assert_contains "$helper" "codex_restart_active_or_start_enabled_user_service"
     assert_contains "$REPO_DIR/packaging/linux/codex-packaged-runtime.sh" "is-enabled codex-update-manager.service"
     assert_not_contains "$REPO_DIR/packaging/linux/codex-packaged-runtime.sh" "enable --now codex-update-manager.service"
-    assert_contains "$REPO_DIR/packaging/linux/codex-update-manager.postinst" "codex_start_enabled_user_service"
-    assert_contains "$REPO_DIR/packaging/linux/codex-desktop.install" "codex_start_enabled_user_service"
-    assert_contains "$REPO_DIR/packaging/linux/codex-desktop.spec" "codex_start_enabled_user_service"
+    assert_contains "$REPO_DIR/packaging/linux/codex-update-manager.postinst" "codex_restart_active_or_start_enabled_user_service"
+    assert_contains "$REPO_DIR/packaging/linux/codex-desktop.install" "codex_restart_active_or_start_enabled_user_service"
+    assert_contains "$REPO_DIR/packaging/linux/codex-desktop.spec" "codex_restart_active_or_start_enabled_user_service"
 }
 
 test_setup_native_wizard_noninteractive_feature_writer() {

@@ -72,7 +72,7 @@ if [ -f "$SERVICE_HELPER" ]; then
     if [ "${1:-0}" -eq 1 ]; then
         codex_ensure_user_service_running || true
     else
-        codex_start_enabled_user_service || true
+        codex_restart_active_or_start_enabled_user_service || true
     fi
 fi
 %else
