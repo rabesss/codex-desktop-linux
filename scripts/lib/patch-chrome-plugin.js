@@ -8,6 +8,24 @@ function warn(message) {
   process.stderr.write(`WARN: ${message}\n`);
 }
 
+function sourceIncludesAny(source, textOrTexts) {
+  const texts = Array.isArray(textOrTexts) ? textOrTexts : [textOrTexts];
+  return texts.some((text) => typeof text === "string" && text.length > 0 && source.includes(text));
+}
+
+function shouldSkipPatch(source, predicate) {
+  if (predicate == null) {
+    return false;
+  }
+  if (typeof predicate === "string") {
+    return source.includes(predicate);
+  }
+  if (typeof predicate === "function") {
+    return predicate(source);
+  }
+  return false;
+}
+
 function patchFile(filePath, patches) {
   let source;
   try {
@@ -18,13 +36,24 @@ function patchFile(filePath, patches) {
   }
 
   let changed = false;
-  for (const { label, oldText, newText, alreadyText = newText } of patches) {
-    if (source.includes(newText) || source.includes(alreadyText)) {
+  for (const {
+    label,
+    oldText,
+    newText,
+    alreadyText = newText,
+    skipIf = null,
+    skipDescription = "target no longer exists in this upstream bundle",
+  } of patches) {
+    if (source.includes(newText) || sourceIncludesAny(source, alreadyText)) {
       console.log(`${path.basename(filePath)} already patched: ${label}`);
       continue;
     }
 
     if (!source.includes(oldText)) {
+      if (shouldSkipPatch(source, skipIf)) {
+        console.log(`${path.basename(filePath)} skipped: ${label} (${skipDescription})`);
+        continue;
+      }
       warn(`${path.basename(filePath)} missing patch target for ${label}`);
       continue;
     }
@@ -39,7 +68,17 @@ function patchFile(filePath, patches) {
   }
 }
 
-function patchFileFirstMatch(filePath, { label, oldTexts, newText, alreadyText = newText }) {
+function patchFileFirstMatch(
+  filePath,
+  {
+    label,
+    oldTexts,
+    newText,
+    alreadyText = newText,
+    skipIf = null,
+    skipDescription = "target no longer exists in this upstream bundle",
+  },
+) {
   let source;
   try {
     source = fs.readFileSync(filePath, "utf8");
@@ -51,9 +90,8 @@ function patchFileFirstMatch(filePath, { label, oldTexts, newText, alreadyText =
   const candidates = oldTexts.map((candidate) =>
     typeof candidate === "string" ? { oldText: candidate, newText } : candidate,
   );
-  const alreadyPatched = [newText, alreadyText, ...candidates.map((candidate) => candidate.newText)]
-    .filter((text) => typeof text === "string" && text.length > 0)
-    .some((text) => source.includes(text));
+  const alreadyPatched = [newText, ...candidates.map((candidate) => candidate.newText)]
+    .some((text) => sourceIncludesAny(source, text)) || sourceIncludesAny(source, alreadyText);
   if (alreadyPatched) {
     console.log(`${path.basename(filePath)} already patched: ${label}`);
     return;
@@ -61,6 +99,10 @@ function patchFileFirstMatch(filePath, { label, oldTexts, newText, alreadyText =
 
   const match = candidates.find((candidate) => source.includes(candidate.oldText));
   if (!match) {
+    if (shouldSkipPatch(source, skipIf)) {
+      console.log(`${path.basename(filePath)} skipped: ${label} (${skipDescription})`);
+      return;
+    }
     warn(`${path.basename(filePath)} missing patch target for ${label}`);
     return;
   }
@@ -75,6 +117,15 @@ if (!pluginDir) {
 }
 
 const scriptsDir = path.resolve(pluginDir, "scripts");
+
+function browserClientHasModernBrowserPreferenceRouting(source) {
+  return (
+    source.includes("browserPreference") &&
+    source.includes("preferredWindowIdFor") &&
+    source.includes("getForUrl") &&
+    source.includes("extensionInstanceId")
+  );
+}
 
 const linuxExtensionAwareUserDataFallback = `  const linuxChromeUserDataDirectory = path.join(os.homedir(), ".config", "google-chrome");
   const linuxChromiumUserDataDirectory = path.join(os.homedir(), ".config", "chromium");
@@ -498,6 +549,8 @@ patchFileFirstMatch(path.join(scriptsDir, "browser-client.mjs"), {
     },
   ],
   alreadyText: "codexLinuxRankBrowserBackends",
+  skipIf: browserClientHasModernBrowserPreferenceRouting,
+  skipDescription: "browser-client.mjs uses upstream browser preference routing",
 });
 
 patchFile(path.join(scriptsDir, "installed-browsers.js"), [

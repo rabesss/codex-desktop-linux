@@ -39,10 +39,10 @@ packages, and bootstraps Rust through `rustup` when needed.
 
 ```bash
 # Fedora 41+
-sudo dnf install python3 7zip curl unzip rpm-build @development-tools
+sudo dnf install python3 7zip curl unzip rpm-build make gcc-c++ @development-tools
 
 # Fedora < 41
-sudo dnf install python3 p7zip p7zip-plugins curl unzip rpm-build
+sudo dnf install python3 p7zip p7zip-plugins curl unzip rpm-build make gcc-c++
 sudo dnf groupinstall 'Development Tools'
 
 # openSUSE
@@ -82,6 +82,11 @@ Equivalent direct commands:
 ./install.sh /path/to/Codex.dmg
 ./install.sh --fresh
 ```
+
+The default path reuses the cached `Codex.dmg` when present. `--fresh` removes
+the generated app directory before rebuilding, and native install shortcuts use
+`--fresh --reuse-dmg` so they clean `codex-app/` while still reusing the cached
+DMG.
 
 The generated `codex-app/` tree contains the locally converted app, Linux
 Electron runtime, rebuilt native modules, launcher, patch metadata, managed

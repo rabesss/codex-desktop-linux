@@ -63,30 +63,61 @@ function applyLinuxFileManagerPatch(currentSource) {
 }
 
 function applyLinuxWindowOptionsPatch(currentSource, iconAsset) {
-  if (iconAsset == null) {
-    return currentSource;
+  let patchedSource = currentSource;
+
+  if (iconAsset != null) {
+    const windowOptionsNeedle = "...process.platform===`win32`?{autoHideMenuBar:!0}:{},";
+    const currentLinuxAutoHideMenuBarNeedle =
+      "...process.platform===`win32`||process.platform===`linux`?{autoHideMenuBar:!0}:{},";
+    const iconPathExpression = `process.resourcesPath+\`/../content/webview/assets/${iconAsset}\``;
+    const iconPathNeedle = `icon:${iconPathExpression}`;
+    const setIconNeedle = `setIcon(${iconPathExpression})`;
+    const readyToShowSetIconInsertionPattern = /[A-Za-z_$][\w$]*\.once\(`ready-to-show`,\(\)=>\{/;
+    const legacyLinuxSystemTitlebarNeedle =
+      `...process.platform===\`win32\`||process.platform===\`linux\`?{autoHideMenuBar:!0,...process.platform===\`linux\`?{${iconPathNeedle}}:{}}:{},`;
+    const windowOptionsReplacement =
+      `...process.platform===\`win32\`?{autoHideMenuBar:!0}:process.platform===\`linux\`?{${iconPathNeedle}}:{},`;
+
+    if (patchedSource.includes(legacyLinuxSystemTitlebarNeedle)) {
+      patchedSource = patchedSource.split(legacyLinuxSystemTitlebarNeedle).join(windowOptionsReplacement);
+    }
+
+    if (patchedSource.includes(windowOptionsNeedle)) {
+      patchedSource = patchedSource.split(windowOptionsNeedle).join(windowOptionsReplacement);
+    } else if (patchedSource.includes(currentLinuxAutoHideMenuBarNeedle)) {
+      patchedSource = patchedSource.split(currentLinuxAutoHideMenuBarNeedle).join(windowOptionsReplacement);
+    } else if (
+      patchedSource === currentSource &&
+      !patchedSource.includes(iconPathNeedle) &&
+      !patchedSource.includes(setIconNeedle) &&
+      !readyToShowSetIconInsertionPattern.test(patchedSource)
+    ) {
+      console.warn("WARN: Could not find BrowserWindow autoHideMenuBar snippet — skipping window options patch");
+    }
   }
 
-  const windowOptionsNeedle = "...process.platform===`win32`?{autoHideMenuBar:!0}:{},";
-  const iconPathExpression = `process.resourcesPath+\`/../content/webview/assets/${iconAsset}\``;
-  const iconPathNeedle = `icon:${iconPathExpression}`;
-  const windowOptionsReplacement =
-    `...process.platform===\`win32\`||process.platform===\`linux\`?{autoHideMenuBar:!0,...process.platform===\`linux\`?{${iconPathNeedle}}:{}}:{},`;
+  return applyDefinedBrowserWindowOptionsPatch(patchedSource);
+}
 
-  if (currentSource.includes(windowOptionsNeedle)) {
-    return currentSource.split(windowOptionsNeedle).join(windowOptionsReplacement);
-  }
+function applyDefinedBrowserWindowOptionsPatch(currentSource) {
+  const browserWindowOptionsRegex =
+    /show:([A-Za-z_$][\w$]*),parent:([A-Za-z_$][\w$]*),focusable:([A-Za-z_$][\w$]*),(\.\.\.process\.platform===`win32`\?\{autoHideMenuBar:!0\}:process\.platform===`linux`\?\{icon:process\.resourcesPath\+`\/\.\.\/content\/webview\/assets\/[^`]+`\}:\{\},)backgroundMaterial:([A-Za-z_$][\w$]*)\?\?void 0,\.\.\.([A-Za-z_$][\w$]*),minWidth:([A-Za-z_$][\w$]*)\?\.width,minHeight:\7\?\.height,webPreferences:([A-Za-z_$][\w$]*)/g;
 
-  if (currentSource.includes(iconPathNeedle)) {
-    return currentSource;
-  }
-
-  if (currentSource.includes("...process.platform===`win32`||process.platform===`linux`?{autoHideMenuBar:!0}:{}")) {
-    return currentSource;
-  }
-
-  console.warn("WARN: Could not find BrowserWindow autoHideMenuBar snippet — skipping window options patch");
-  return currentSource;
+  return currentSource.replace(
+    browserWindowOptionsRegex,
+    (
+      _match,
+      showAlias,
+      parentAlias,
+      focusableAlias,
+      platformOptions,
+      backgroundMaterialAlias,
+      appearanceOptionsAlias,
+      minimumSizeAlias,
+      webPreferencesAlias,
+    ) =>
+      `show:${showAlias},...${parentAlias}==null?{}:{parent:${parentAlias}},...${focusableAlias}==null?{}:{focusable:${focusableAlias}},${platformOptions}...${backgroundMaterialAlias}==null?{}:{backgroundMaterial:${backgroundMaterialAlias}},...${appearanceOptionsAlias},...${minimumSizeAlias}==null?{}:{minWidth:${minimumSizeAlias}.width,minHeight:${minimumSizeAlias}.height},webPreferences:${webPreferencesAlias}`,
+  );
 }
 
 function applyLinuxMenuPatch(currentSource) {
@@ -387,12 +418,18 @@ function applyLinuxExplicitQuitPromptBypassPatch(currentSource) {
   const promptBypassExpression =
     "(typeof codexLinuxShouldBypassQuitPrompt===`function`&&codexLinuxShouldBypassQuitPrompt())||";
   const promptBypassGuard = `if(${promptBypassExpression}`;
+  const quitMarkerExpression =
+    "process.platform===`linux`&&typeof codexLinuxMarkQuitInProgress===`function`&&codexLinuxMarkQuitInProgress(),";
   const beforeQuitNeedle =
     "if(e||i.canQuitWithoutPrompt()||r||!s&&!c){g=!0,a.markAppQuitting();return}";
   const beforeQuitPatch =
-    `if(${promptBypassExpression}e||i.canQuitWithoutPrompt()||r||!s&&!c){g=!0,a.markAppQuitting();return}`;
+    `if(${promptBypassExpression}e||i.canQuitWithoutPrompt()||r||!s&&!c){${quitMarkerExpression}g=!0,a.markAppQuitting();return}`;
   const beforeQuitRegex =
     /if\(([A-Za-z_$][\w$]*)\|\|([A-Za-z_$][\w$]*)\.canQuitWithoutPrompt\(\)\|\|([A-Za-z_$][\w$]*)\|\|!([A-Za-z_$][\w$]*)&&!([A-Za-z_$][\w$]*)\)\{([A-Za-z_$][\w$]*)=!0,([A-Za-z_$][\w$]*)\.markAppQuitting\(\);return\}/g;
+  const patchedBeforeQuitWithoutMarkerRegex =
+    /if\(\(typeof codexLinuxShouldBypassQuitPrompt===`function`&&codexLinuxShouldBypassQuitPrompt\(\)\)\|\|([A-Za-z_$][\w$]*)\|\|([A-Za-z_$][\w$]*)\.canQuitWithoutPrompt\(\)\|\|([A-Za-z_$][\w$]*)\|\|!([A-Za-z_$][\w$]*)&&!([A-Za-z_$][\w$]*)\)\{([A-Za-z_$][\w$]*)=!0,([A-Za-z_$][\w$]*)\.markAppQuitting\(\);return\}/g;
+  const acceptedPromptRegex =
+    /([A-Za-z_$][\w$]*)\.markQuitApproved\(\),([A-Za-z_$][\w$]*)=!0,([A-Za-z_$][\w$]*)\.markAppQuitting\(\)/g;
   let patchedAny = false;
 
   if (patchedSource.includes(beforeQuitNeedle)) {
@@ -404,7 +441,25 @@ function applyLinuxExplicitQuitPromptBypassPatch(currentSource) {
     beforeQuitRegex,
     (_match, updateInstallVar, quitControllerVar, appQuittingVar, activeConversationVar, automationVar, quittingStateVar, appQuittingControllerVar) => {
       patchedAny = true;
-      return `if(${promptBypassExpression}${updateInstallVar}||${quitControllerVar}.canQuitWithoutPrompt()||${appQuittingVar}||!${activeConversationVar}&&!${automationVar}){${quittingStateVar}=!0,${appQuittingControllerVar}.markAppQuitting();return}`;
+      return `if(${promptBypassExpression}${updateInstallVar}||${quitControllerVar}.canQuitWithoutPrompt()||${appQuittingVar}||!${activeConversationVar}&&!${automationVar}){${quitMarkerExpression}${quittingStateVar}=!0,${appQuittingControllerVar}.markAppQuitting();return}`;
+    },
+  );
+  patchedSource = patchedSource.replace(
+    patchedBeforeQuitWithoutMarkerRegex,
+    (_match, updateInstallVar, quitControllerVar, appQuittingVar, activeConversationVar, automationVar, quittingStateVar, appQuittingControllerVar) => {
+      patchedAny = true;
+      return `if(${promptBypassExpression}${updateInstallVar}||${quitControllerVar}.canQuitWithoutPrompt()||${appQuittingVar}||!${activeConversationVar}&&!${automationVar}){${quitMarkerExpression}${quittingStateVar}=!0,${appQuittingControllerVar}.markAppQuitting();return}`;
+    },
+  );
+  patchedSource = patchedSource.replace(
+    acceptedPromptRegex,
+    (match, quitControllerVar, quittingStateVar, appQuittingControllerVar, offset, source) => {
+      const prefix = source.slice(Math.max(0, offset - 120), offset);
+      if (prefix.includes("codexLinuxMarkQuitInProgress()")) {
+        return match;
+      }
+      patchedAny = true;
+      return `${quitMarkerExpression}${quitControllerVar}.markQuitApproved(),${quittingStateVar}=!0,${appQuittingControllerVar}.markAppQuitting()`;
     },
   );
 

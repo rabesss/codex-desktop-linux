@@ -210,6 +210,10 @@ function applyWrapperUpdateGeneralSettingsPatch(source) {
 function patchWrapperUpdateSettingsAssets(extractedDir) {
   try {
     const assetsDir = path.join(extractedDir, "webview", "assets");
+    if (!fs.existsSync(assetsDir)) {
+      return { matched: false, changed: 0, reason: `missing webview assets directory ${assetsDir}` };
+    }
+
     for (const generatedAsset of [KEYBINDS_ASSET, LINUX_DESKTOP_SETTINGS_ASSET]) {
       const generatedPath = path.join(assetsDir, generatedAsset);
       if (!fs.existsSync(generatedPath)) {
@@ -249,6 +253,20 @@ function patchWrapperUpdateSettingsAssets(extractedDir) {
       } catch (error) {
         lastError = error instanceof Error ? error.message : String(error);
       }
+    }
+
+    if (
+      lastError != null &&
+      (
+        lastError.includes("could not find general power settings function") ||
+        lastError.includes("could not find general power settings row")
+      )
+    ) {
+      return {
+        matched: true,
+        changed: 0,
+        reason: "upstream settings shape does not expose the legacy wrapper update toggle extension point",
+      };
     }
 
     return { matched: false, changed: 0, reason: lastError ?? "could not patch general settings asset" };

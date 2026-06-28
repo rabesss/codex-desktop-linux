@@ -13,19 +13,35 @@ const AUTOMATION_SCHEDULE_MARKER =
 const AUTOMATION_SCHEDULE_PATCH_MARKER = "function codexLinuxNormalizeRruleNumbers(";
 const AUTOMATION_SCHEDULE_UPSTREAM_MULTI_TIME_MARKER =
   ".byhour.flatMap(t=>e.byminute.map(e=>({hour:t,minute:e})))";
+const MINIFIED_IDENTIFIER = "[A-Za-z_$][\\w$]*";
 
 function findWorkspaceRootDropHandlerBundles(extractedDir) {
-  const buildDir = path.join(extractedDir, ".vite", "build");
-  return readDirectoryNames(buildDir)
-    .filter((name) => name.endsWith(".js"))
-    .sort()
-    .map((name) => path.join(buildDir, name))
+  const candidateDirs = [
+    path.join(extractedDir, ".vite", "build"),
+    path.join(extractedDir, "webview", "assets"),
+  ];
+  return candidateDirs
+    .flatMap((dir) =>
+      readDirectoryNames(dir)
+        .filter((name) => name.endsWith(".js"))
+        .sort()
+        .map((name) => path.join(dir, name)),
+    )
     .filter((candidate) => {
       try {
         const source = fs.readFileSync(candidate, "utf8");
         return source.includes(AUTOMATION_SCHEDULE_MARKER) ||
           source.includes(AUTOMATION_SCHEDULE_PATCH_MARKER) ||
-          source.includes(AUTOMATION_SCHEDULE_UPSTREAM_MULTI_TIME_MARKER);
+          source.includes(AUTOMATION_SCHEDULE_UPSTREAM_MULTI_TIME_MARKER) ||
+          (
+            /^automation-schedule-.*\.js$/.test(path.basename(candidate)) &&
+            source.includes("hasMultipleTimeValues") &&
+            source.includes("function Tn(")
+          ) ||
+          (
+            source.includes("hasMultipleTimeValues") &&
+            new RegExp(`rruleText:e,time:${MINIFIED_IDENTIFIER}\\(r\\.byhour,r\\.byminute,r\\)`).test(source)
+          );
       } catch {
         return false;
       }
@@ -98,7 +114,7 @@ function automationScheduleReplacement(block) {
 
 function applyAutomationScheduleMultiTimePatch(source) {
   if (
-    source.includes(AUTOMATION_SCHEDULE_PATCH_MARKER) ||
+    source.includes("function codexLinuxNormalizeRruleNumbers(") ||
     source.includes(AUTOMATION_SCHEDULE_UPSTREAM_MULTI_TIME_MARKER)
   ) {
     return source;
@@ -106,6 +122,14 @@ function applyAutomationScheduleMultiTimePatch(source) {
 
   const block = findAutomationScheduleHelperBlock(source);
   if (block == null) {
+    const currentPatched = applyCurrentAutomationScheduleMultiTimePatch(source);
+    if (currentPatched !== source) {
+      return currentPatched;
+    }
+    const genericPatched = applyGenericAutomationScheduleMultiTimePatch(source);
+    if (genericPatched !== source) {
+      return genericPatched;
+    }
     console.warn("WARN: Could not find automation schedule helper block — skipping RRULE multi-time patch");
     return source;
   }
@@ -113,10 +137,113 @@ function applyAutomationScheduleMultiTimePatch(source) {
   return source.slice(0, block.start) + automationScheduleReplacement(block) + source.slice(block.end);
 }
 
+function applyGenericAutomationScheduleMultiTimePatch(source) {
+  if (source.includes("function codexLinuxNormalizeRruleNumbers(")) {
+    return source;
+  }
+
+  const parserRe = new RegExp(
+    `hasMultipleTimeValues:Array\\.isArray\\(r\\.byhour\\)&&r\\.byhour\\.length>1\\|\\|Array\\.isArray\\(r\\.byminute\\)&&r\\.byminute\\.length>1,interval:Math\\.max\\(1,Math\\.round\\(r\\.interval\\?\\?1\\)\\),minute:a,origOptions:n\\.origOptions,rruleText:e,time:(${MINIFIED_IDENTIFIER})\\(r\\.byhour,r\\.byminute,r\\),weekdays:i`,
+  );
+  const parserMatch = parserRe.exec(source);
+  if (!parserMatch) {
+    return source;
+  }
+  const timeFn = parserMatch[1];
+
+  const helperRe = new RegExp(
+    "function " +
+      timeFn.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") +
+      `\\(e,t,n\\)\\{let r=(${MINIFIED_IDENTIFIER})\\(e\\),i=\\1\\(t\\);return r!=null&&i!=null\\?(${MINIFIED_IDENTIFIER})\\(r,i\\):n\\.dtstart\\?\\2\\(n\\.dtstart\\.getHours\\(\\),n\\.dtstart\\.getMinutes\\(\\)\\):(${MINIFIED_IDENTIFIER})\\}function \\1\\(e\\)\\{return Array\\.isArray\\(e\\)\\?typeof e\\[0\\]==\`number\`\\?e\\[0\\]:null:typeof e==\`number\`\\?e:null\\}`,
+  );
+  const helperMatch = helperRe.exec(source);
+  if (!helperMatch) {
+    return source;
+  }
+  const helperBlock = helperMatch[0];
+  const combineFn = helperMatch[2];
+
+  const summaryRe = new RegExp(
+    `function (${MINIFIED_IDENTIFIER})\\(e,t\\)\\{if\\(!e\\|\\|e\\.hasMultipleTimeValues\\)return null;[\\s\\S]*?let i=(${MINIFIED_IDENTIFIER})\\(e\\.time,t\\);return i\\?(${MINIFIED_IDENTIFIER})\\(\\{intl:t,isEveryDay:r,timeLabel:i,weekdays:n\\}\\):null\\}`,
+  );
+  const summaryMatch = summaryRe.exec(source);
+  if (!summaryMatch) {
+    return source;
+  }
+  const summaryBlock = summaryMatch[0];
+  const labelFn = summaryMatch[2];
+
+  const helperPatch =
+    helperBlock +
+    "function codexLinuxNormalizeRruleNumbers(e,t,n){let r=Array.isArray(e)?e:[e];return Array.from(new Set(r.filter(e=>typeof e==`number`&&Number.isInteger(e)&&e>=t&&e<=n))).sort((e,t)=>e-t)}" +
+    "function codexLinuxRruleTimes(e,t,n){let r=codexLinuxNormalizeRruleNumbers(e,0,23),i=codexLinuxNormalizeRruleNumbers(t,0,59);n.dtstart&&(r.length!==0||(r=[n.dtstart.getHours()]),i.length!==0||(i=[n.dtstart.getMinutes()]));let a=[];for(let e of r)for(let t of i)a.push(" +
+    combineFn +
+    "(e,t));return Array.from(new Set(a)).sort()}" +
+    "function codexLinuxAutomationTimeLabel(e,t){let n=Array.isArray(e.timeValues)&&e.timeValues.length>0?e.timeValues:[e.time],r=n.map(e=>" +
+    labelFn +
+    "(e,t)).filter(Boolean);return r.length===0?null:typeof t.formatList==`function`?t.formatList(r,{type:`conjunction`}):r.join(`, `)}";
+
+  const parserPatch =
+    "hasMultipleTimeValues:codexLinuxRruleTimes(r.byhour,r.byminute,r).length>1,interval:Math.max(1,Math.round(r.interval??1)),minute:a,origOptions:n.origOptions,rruleText:e,time:" +
+    timeFn +
+    "(r.byhour,r.byminute,r),timeValues:codexLinuxRruleTimes(r.byhour,r.byminute,r),weekdays:i";
+
+  const summaryPatch = summaryBlock
+    .replace("if(!e||e.hasMultipleTimeValues)return null;", "if(!e)return null;")
+    .replace(
+      "let i=" + labelFn + "(e.time,t);",
+      "let i=codexLinuxAutomationTimeLabel(e,t);",
+    );
+
+  let patched = source.replace(helperBlock, () => helperPatch);
+  patched = patched.replace(parserMatch[0], () => parserPatch);
+  patched = patched.replace(summaryBlock, () => summaryPatch);
+  return patched;
+}
+
+function applyCurrentAutomationScheduleMultiTimePatch(source) {
+  if (
+    !source.includes("hasMultipleTimeValues") ||
+    !source.includes("function Tn(") ||
+    !source.includes("function bn(")
+  ) {
+    return source;
+  }
+
+  let patchedSource = source;
+  const helperNeedle =
+    "function Tn(e,t,n){let r=En(e),i=En(t);return r!=null&&i!=null?Mn(r,i):n.dtstart?Mn(n.dtstart.getHours(),n.dtstart.getMinutes()):Wt}function En(e){return Array.isArray(e)?typeof e[0]==`number`?e[0]:null:typeof e==`number`?e:null}";
+  const helperPatch =
+    `${helperNeedle}function codexLinuxNormalizeRruleNumbers(e,t,n){let r=Array.isArray(e)?e:[e];return Array.from(new Set(r.filter(e=>typeof e==\`number\`&&Number.isInteger(e)&&e>=t&&e<=n))).sort((e,t)=>e-t)}function codexLinuxRruleTimes(e,t,n){let r=codexLinuxNormalizeRruleNumbers(e,0,23),i=codexLinuxNormalizeRruleNumbers(t,0,59);n.dtstart&&(r.length!==0||(r=[n.dtstart.getHours()]),i.length!==0||(i=[n.dtstart.getMinutes()]));let a=[];for(let e of r)for(let t of i)a.push(Mn(e,t));return Array.from(new Set(a)).sort()}function codexLinuxAutomationTimeLabel(e,t){let n=Array.isArray(e.timeValues)&&e.timeValues.length>0?e.timeValues:[e.time],r=n.map(e=>Mt(e,t)).filter(Boolean);return r.length===0?null:typeof t.formatList==\`function\`?t.formatList(r,{type:\`conjunction\`}):r.join(\`, \`)}`;
+  if (!patchedSource.includes(helperNeedle)) {
+    return source;
+  }
+  patchedSource = patchedSource.replace(helperNeedle, helperPatch);
+
+  const parserNeedle =
+    "hasMultipleTimeValues:Array.isArray(r.byhour)&&r.byhour.length>1||Array.isArray(r.byminute)&&r.byminute.length>1,interval:Math.max(1,Math.round(r.interval??1)),minute:a,origOptions:n.origOptions,rruleText:e,time:Tn(r.byhour,r.byminute,r),weekdays:i";
+  const parserPatch =
+    "hasMultipleTimeValues:codexLinuxRruleTimes(r.byhour,r.byminute,r).length>1,interval:Math.max(1,Math.round(r.interval??1)),minute:a,origOptions:n.origOptions,rruleText:e,time:Tn(r.byhour,r.byminute,r),timeValues:codexLinuxRruleTimes(r.byhour,r.byminute,r),weekdays:i";
+  if (!patchedSource.includes(parserNeedle)) {
+    return source;
+  }
+  patchedSource = patchedSource.replace(parserNeedle, parserPatch);
+
+  const summaryNeedle =
+    "function bn(e,t){if(!e||e.hasMultipleTimeValues)return null;let n=on(e.weekdays),r=n.length===q.length;if(e.freq===K.MINUTELY)return Sn({intervalMinutes:e.interval,intl:t,isEveryDay:r,weekdays:n});if(e.freq===K.HOURLY)return xn({intervalHours:e.interval,intl:t,isEveryDay:r,weekdays:n});if(e.freq!==K.DAILY&&e.freq!==K.WEEKLY)return null;let i=Mt(e.time,t);return i?wn({intl:t,isEveryDay:r,timeLabel:i,weekdays:n}):null}";
+  const summaryPatch =
+    "function bn(e,t){if(!e)return null;let n=on(e.weekdays),r=n.length===q.length;if(e.freq===K.MINUTELY)return Sn({intervalMinutes:e.interval,intl:t,isEveryDay:r,weekdays:n});if(e.freq===K.HOURLY)return xn({intervalHours:e.interval,intl:t,isEveryDay:r,weekdays:n});if(e.freq!==K.DAILY&&e.freq!==K.WEEKLY)return null;let i=codexLinuxAutomationTimeLabel(e,t);return i?wn({intl:t,isEveryDay:r,timeLabel:i,weekdays:n}):null}";
+  if (!patchedSource.includes(summaryNeedle)) {
+    return source;
+  }
+  patchedSource = patchedSource.replace(summaryNeedle, summaryPatch);
+  return patchedSource;
+}
+
 function patchAutomationScheduleAssets(extractedDir) {
   const candidates = findWorkspaceRootDropHandlerBundles(extractedDir);
   if (candidates.length === 0) {
-    const reason = `Could not find workspace-root-drop-handler bundle in ${path.join(extractedDir, ".vite", "build")}`;
+    const reason = `Could not find automation schedule bundle in ${path.join(extractedDir, ".vite", "build")} or ${path.join(extractedDir, "webview", "assets")}`;
     console.warn(`WARN: ${reason} — skipping RRULE multi-time patch`);
     return { matched: 0, changed: 0, reason };
   }
