@@ -2691,6 +2691,7 @@ SCRIPT
     assert_file_exists "$REPO_DIR/launcher/webview-server.py"
     assert_contains "$REPO_DIR/launcher/webview-server.py" "Cache-Control"
     assert_contains "$REPO_DIR/launcher/webview-server.py" "If-Modified-Since"
+    assert_contains "$REPO_DIR/launcher/webview-server.py" "CODEX_WEBVIEW_SERVER_DISABLE_PARENT_DEATHSIG"
     assert_contains "$REPO_DIR/install.sh" "webview-server.py"
     assert_contains "$REPO_DIR/launcher/start.sh.template" 'python3 "$SCRIPT_DIR/.codex-linux/webview-server.py" "$CODEX_LINUX_WEBVIEW_PORT" --bind 127.0.0.1'
     assert_contains "$REPO_DIR/launcher/start.sh.template" "WEBVIEW_PID_FILE"
@@ -2728,6 +2729,7 @@ import sys
 source = open(sys.argv[1], encoding="utf-8").read()
 detect_body = source.split("detect_warm_start() {", 1)[1].split("send_warm_start_launch_action() {", 1)[0]
 launch_body = source.split("launch_electron() {", 1)[1].split("load_packaged_runtime_helper", 1)[0]
+cleanup_body = source.split("cleanup_launcher() {", 1)[1].split("cleanup_electron_session_descendants() {", 1)[0]
 runtime_body = source.split("trap cleanup_launcher EXIT", 1)[1].split("launch_electron", 1)[0]
 webview_probe_body = source.split("webview_port_is_open() {", 1)[1].split("wait_for_webview_server() {", 1)[0]
 wait_body = source.split("wait_for_webview_server() {", 1)[1].split("verify_webview_origin() {", 1)[0]
@@ -2806,6 +2808,10 @@ if 'unset ELECTRON_RUN_AS_NODE\n        release_launch_lock\n        "$SCRIPT_DI
     raise SystemExit("fallback second-instance handoff must release the startup lock before invoking Electron")
 if not re.search(r'cleanup_launcher\(\) \{\s+release_launch_lock', source):
     raise SystemExit("launcher cleanup must release a held startup lock on every exit path")
+if 'setsid --wait true' not in launch_body:
+    raise SystemExit("cold Electron launches must detect setsid --wait support")
+if 'setsid --wait "$SCRIPT_DIR/electron" "${ELECTRON_LAUNCH_ARGS[@]}" "${ELECTRON_ARGS[@]}" &' not in launch_body:
+    raise SystemExit("cold Electron launches must use setsid --wait when available")
 if 'setsid "$SCRIPT_DIR/electron" "${ELECTRON_LAUNCH_ARGS[@]}" "${ELECTRON_ARGS[@]}" &' not in launch_body:
     raise SystemExit("cold Electron launches must use an isolated session when setsid is available")
 if 'cleanup_electron_session_descendants' not in launch_body:
@@ -2822,6 +2828,12 @@ if 'if webview_port_is_open; then' not in monitor_body or 'leaving it untouched'
     raise SystemExit("webview monitor must not restart over a busy foreign port")
 if 'start_webview_server_process' not in monitor_body or 'wait_for_webview_server' not in monitor_body:
     raise SystemExit("webview monitor must restart the app-owned server and verify readiness")
+if 'webview-server.log' not in source:
+    raise SystemExit("webview server stdout/stderr must be captured in a dedicated log")
+if 'CODEX_WEBVIEW_SERVER_DISABLE_PARENT_DEATHSIG=1 setsid python3 "$SCRIPT_DIR/.codex-linux/webview-server.py" "$CODEX_LINUX_WEBVIEW_PORT" --bind 127.0.0.1' not in source:
+    raise SystemExit("webview server must run in an isolated session when setsid is available")
+if 'CODEX_WEBVIEW_SERVER_DISABLE_PARENT_DEATHSIG=1 nohup python3 "$SCRIPT_DIR/.codex-linux/webview-server.py" "$CODEX_LINUX_WEBVIEW_PORT" --bind 127.0.0.1' not in source:
+    raise SystemExit("webview server must have a nohup fallback when setsid is unavailable")
 if 'invalidate_electron_web_cache_on_build_change' not in source:
     raise SystemExit("launcher must invalidate disposable Electron caches when patched build metadata changes")
 if '"$user_data_dir/Code Cache"' not in source or 'web-cache-build.sha256' not in source:
@@ -2836,7 +2848,7 @@ warm_unset_pos = launch_body.index("unset ELECTRON_RUN_AS_NODE", warm_log_pos)
 warm_launch_pos = launch_body.index(electron_launch, warm_unset_pos)
 normal_log_pos = launch_body.index(normal_log)
 normal_unset_pos = launch_body.index("unset ELECTRON_RUN_AS_NODE", normal_log_pos)
-normal_launch_pos = launch_body.index("setsid " + electron_launch + " &", normal_unset_pos)
+normal_launch_pos = launch_body.index("setsid --wait " + electron_launch + " &", normal_unset_pos)
 if not (warm_log_pos < warm_unset_pos < warm_launch_pos < normal_log_pos < normal_unset_pos < normal_launch_pos):
     raise SystemExit("launch_electron must clear ELECTRON_RUN_AS_NODE immediately before each Electron launch")
 if "using_second_instance_handoff" not in source or "needs_cold_start" not in source:
@@ -2884,6 +2896,12 @@ if "running_app_is_active" not in adopt_body:
     raise SystemExit("adopt_existing_webview_server must detect live-app reuse before cleanup")
 if 'current_webview_pid="$(cat "$WEBVIEW_PID_FILE"' not in source or 'kill "$current_webview_pid"' not in source:
     raise SystemExit("launcher cleanup must stop monitor-restarted webview servers from the pid file")
+if 'electron_still_running=1' not in cleanup_body:
+    raise SystemExit("launcher cleanup must detect when launched Electron survived the wrapper")
+if 'Preserving webview server for running Electron pid=$ELECTRON_PID' not in cleanup_body:
+    raise SystemExit("launcher cleanup must preserve the webview server for a live Electron process")
+if 'if [ "$electron_still_running" -eq 0 ] && [ -n "${WEBVIEW_MONITOR_PID:-}" ]' not in cleanup_body:
+    raise SystemExit("launcher cleanup must not stop the webview monitor while launched Electron is alive")
 if "if adopt_existing_webview_server; then" not in ensure_body:
     raise SystemExit("ensure_webview_server must split adoption from origin verification")
 if "stop_stale_webview_server" not in ensure_body:

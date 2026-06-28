@@ -1836,8 +1836,16 @@ adopt_discovered_webview_server() {
 }
 
 start_webview_server_process() {
+    local server_log="$LOG_DIR/webview-server.log"
+
     cd "$WEBVIEW_DIR"
-    python3 "$SCRIPT_DIR/.codex-linux/webview-server.py" "$CODEX_LINUX_WEBVIEW_PORT" --bind 127.0.0.1 &
+    if command -v setsid >/dev/null 2>&1; then
+        CODEX_WEBVIEW_SERVER_DISABLE_PARENT_DEATHSIG=1 setsid python3 "$SCRIPT_DIR/.codex-linux/webview-server.py" "$CODEX_LINUX_WEBVIEW_PORT" --bind 127.0.0.1 >>"$server_log" 2>&1 &
+    elif command -v nohup >/dev/null 2>&1; then
+        CODEX_WEBVIEW_SERVER_DISABLE_PARENT_DEATHSIG=1 nohup python3 "$SCRIPT_DIR/.codex-linux/webview-server.py" "$CODEX_LINUX_WEBVIEW_PORT" --bind 127.0.0.1 >>"$server_log" 2>&1 &
+    else
+        CODEX_WEBVIEW_SERVER_DISABLE_PARENT_DEATHSIG=1 python3 "$SCRIPT_DIR/.codex-linux/webview-server.py" "$CODEX_LINUX_WEBVIEW_PORT" --bind 127.0.0.1 >>"$server_log" 2>&1 &
+    fi
     STARTED_WEBVIEW_PID=$!
     echo "$STARTED_WEBVIEW_PID" > "$WEBVIEW_PID_FILE"
 
@@ -2343,7 +2351,12 @@ configure_side_by_side_app_env() {
 cleanup_launcher() {
     release_launch_lock
 
-    if [ -n "${ELECTRON_PID:-}" ] && [ -f "$APP_PID_FILE" ]; then
+    local electron_still_running=0
+    if [ -n "${ELECTRON_PID:-}" ] && pid_matches_executable "$ELECTRON_PID" "$SCRIPT_DIR/electron"; then
+        electron_still_running=1
+    fi
+
+    if [ "$electron_still_running" -eq 0 ] && [ -n "${ELECTRON_PID:-}" ] && [ -f "$APP_PID_FILE" ]; then
         local current_pid
         current_pid="$(cat "$APP_PID_FILE" 2>/dev/null || true)"
         if [ "$current_pid" = "$ELECTRON_PID" ]; then
@@ -2351,24 +2364,28 @@ cleanup_launcher() {
         fi
     fi
 
-    if [ -n "${WEBVIEW_MONITOR_PID:-}" ] && kill -0 "$WEBVIEW_MONITOR_PID" 2>/dev/null; then
+    if [ "$electron_still_running" -eq 0 ] && [ -n "${WEBVIEW_MONITOR_PID:-}" ] && kill -0 "$WEBVIEW_MONITOR_PID" 2>/dev/null; then
         kill "$WEBVIEW_MONITOR_PID" 2>/dev/null || true
         wait "$WEBVIEW_MONITOR_PID" 2>/dev/null || true
     fi
 
     if [ -n "${STARTED_WEBVIEW_PID:-}${WEBVIEW_MONITOR_PID:-}" ]; then
-        local current_webview_pid=""
-        if [ -f "$WEBVIEW_PID_FILE" ]; then
-            current_webview_pid="$(cat "$WEBVIEW_PID_FILE" 2>/dev/null || true)"
-        fi
+        if [ "$electron_still_running" -eq 1 ]; then
+            echo "Preserving webview server for running Electron pid=$ELECTRON_PID"
+        else
+            local current_webview_pid=""
+            if [ -f "$WEBVIEW_PID_FILE" ]; then
+                current_webview_pid="$(cat "$WEBVIEW_PID_FILE" 2>/dev/null || true)"
+            fi
 
-        if [ -n "$current_webview_pid" ] && pid_is_webview_server "$current_webview_pid"; then
-            kill "$current_webview_pid" 2>/dev/null || true
+            if [ -n "$current_webview_pid" ] && pid_is_webview_server "$current_webview_pid"; then
+                kill "$current_webview_pid" 2>/dev/null || true
+            fi
+            if [ -n "${STARTED_WEBVIEW_PID:-}" ] && [ "$STARTED_WEBVIEW_PID" != "$current_webview_pid" ] && pid_is_webview_server "$STARTED_WEBVIEW_PID"; then
+                kill "$STARTED_WEBVIEW_PID" 2>/dev/null || true
+            fi
+            rm -f "$WEBVIEW_PID_FILE"
         fi
-        if [ -n "${STARTED_WEBVIEW_PID:-}" ] && [ "$STARTED_WEBVIEW_PID" != "$current_webview_pid" ] && pid_is_webview_server "$STARTED_WEBVIEW_PID"; then
-            kill "$STARTED_WEBVIEW_PID" 2>/dev/null || true
-        fi
-        rm -f "$WEBVIEW_PID_FILE"
     fi
 
     if [ -n "${CODEX_LINUX_SHORT_TMPDIR_CREATED:-}" ] && [ -n "${CODEX_LINUX_SHORT_TMPDIR_CLEANUP_PARENT:-}" ]; then
@@ -2450,7 +2467,11 @@ launch_electron() {
     echo "Electron launch mode: rendering_mode=$ELECTRON_RENDERING_MODE wslg_detected=$ELECTRON_WSLG_DETECTED ozone_platform=${ELECTRON_OZONE_PLATFORM:-default} ozone_hint=${ELECTRON_OZONE_HINT:-none} gpu_enabled=$ELECTRON_GPU_ENABLED gpu_disable_arg=$ELECTRON_GPU_DISABLE_SWITCH_IN_ARGS gpu_compositing_disabled=$ELECTRON_GPU_COMPOSITING_DISABLED gl_switch_added=$ELECTRON_GL_SWITCH_ADDED renderer_accessibility_forced=$ELECTRON_RENDERER_ACCESSIBILITY_FORCED"
     unset ELECTRON_RUN_AS_NODE
     if command -v setsid >/dev/null 2>&1; then
-        setsid "$SCRIPT_DIR/electron" "${ELECTRON_LAUNCH_ARGS[@]}" "${ELECTRON_ARGS[@]}" &
+        if setsid --wait true >/dev/null 2>&1; then
+            setsid --wait "$SCRIPT_DIR/electron" "${ELECTRON_LAUNCH_ARGS[@]}" "${ELECTRON_ARGS[@]}" &
+        else
+            setsid "$SCRIPT_DIR/electron" "${ELECTRON_LAUNCH_ARGS[@]}" "${ELECTRON_ARGS[@]}" &
+        fi
         ELECTRON_SESSION_ID=$!
     else
         "$SCRIPT_DIR/electron" "${ELECTRON_LAUNCH_ARGS[@]}" "${ELECTRON_ARGS[@]}" &

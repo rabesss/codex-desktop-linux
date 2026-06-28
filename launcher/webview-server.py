@@ -18,6 +18,8 @@ def _install_parent_death_signal():
     # without invoking its cleanup trap (SIGKILL, OOM, crash). Without this,
     # the HTTP server can outlive the launcher and block its webview port,
     # which is fatal for multi-instance launches pinned to a single port.
+    if os.environ.get("CODEX_WEBVIEW_SERVER_DISABLE_PARENT_DEATHSIG") == "1":
+        return
     if sys.platform != "linux":
         return
     libc_name = ctypes.util.find_library("c") or "libc.so.6"
