@@ -120,7 +120,7 @@ JSON
 {"name":"browser","version":"0.1.0-alpha2","interface":{"category":"Engineering"}}
 JSON
     cat > "$resources_dir/plugins/openai-bundled/plugins/browser/scripts/browser-client.mjs" <<'JS'
-function lu(e){let t=globalThis.nodeRepl?.env[e];return typeof t=="string"?t:void 0}function Me(){let e=globalThis.nodeRepl;return e?.config==null?void 0:e}function th(){let e=import.meta.__codexNativePipe;return e==null||typeof e.createConnection!="function"?null:e}var I2=new Set(["about:blank"]);function Gb(e){if(I2.has(e))return!0;let t;try{t=new URL(e)}catch{return!1}return t.protocol==="http:"||t.protocol==="https:"}class Uf{async fetchBlocked(e){let r=await bS(e.endpoint,{method:"GET"});if(!r.ok)throw new Error(ae(`Browser Use cannot determine if ${e.displayUrl} is allowed. Please try again later or use another source.`));let n=await r.json();return TF(n)}}export function setupAtlasRuntime() {}
+import{readdir as Uk}from"node:fs/promises";import qk from"node:path";function lu(e){let t=globalThis.nodeRepl?.env[e];return typeof t=="string"?t:void 0}function Me(){let e=globalThis.nodeRepl;return e?.config==null?void 0:e}function th(){let e=import.meta.__codexNativePipe;return e==null||typeof e.createConnection!="function"?null:e}var I2=new Set(["about:blank"]);function Gb(e){if(I2.has(e))return!0;let t;try{t=new URL(e)}catch{return!1}return t.protocol==="http:"||t.protocol==="https:"}class Uf{async fetchBlocked(e){let r=await bS(e.endpoint,{method:"GET"});if(!r.ok)throw new Error(ae(`Browser Use cannot determine if ${e.displayUrl} is allowed. Please try again later or use another source.`));let n=await r.json();return TF(n)}}var IH=async(t,{codexSessionId:e})=>{let r=Wt(eE),n=t.filter(i=>i.info.type==="iab"),o=AH(n,e,r);return await Promise.all(n.filter(i=>!o.includes(i)).map(async({api:i})=>i.close())),[...t.filter(i=>i.info.type!=="iab"),...o]},AH=(t,e,r)=>e==null?[]:t.filter(n=>n.info.metadata?.codexSessionId===e&&(r==null||n.info.metadata.codexAppBuildFlavor===r));var ab="/tmp/codex-browser-use",MH=async()=>(await Uk(ab)).map(e=>qk.resolve(ab,e)),BH=async()=>[];export function setupAtlasRuntime() {}
 JS
     cat > "$resources_dir/plugins/openai-bundled/plugins/browser/docs/api.md" <<'MD'
 interface DomCUAAPI {
@@ -1155,6 +1155,21 @@ test_make_install_reports_missing_native_packages() {
 
         assert_contains "$output_log" "$expected"
     done
+}
+
+test_make_run_app_reports_missing_launcher() {
+    info "Checking make run-app missing-launcher diagnostics"
+    local workspace="$TMP_DIR/make-run-app-missing"
+    local output_log="$workspace/run-app.log"
+
+    mkdir -p "$workspace"
+
+    if make -f "$REPO_DIR/Makefile" -C "$workspace" run-app >"$output_log" 2>&1; then
+        fail "make run-app should fail when codex-app/start.sh is missing"
+    fi
+
+    assert_contains "$output_log" "Missing launcher: $workspace/codex-app/start.sh. Run make build-app first."
+    assert_not_contains "$output_log" "No such file or directory"
 }
 
 test_make_build_app_uses_installer_download_flow_by_default() {
@@ -3383,6 +3398,138 @@ for (const [key, value] of Object.entries(expected)) {
 NODE
 }
 
+test_browser_use_iab_single_backend_fallback_patch_behavior() {
+    info "Checking Browser Use Linux IAB stale-session fallback"
+    local workspace="$TMP_DIR/browser-iab-single-backend-fallback"
+    local client="$workspace/browser-client.mjs"
+
+    mkdir -p "$workspace"
+    cat > "$client" <<'JS'
+var IH=async(t,{codexSessionId:e})=>{let r=Wt(eE),n=t.filter(i=>i.info.type==="iab"),o=AH(n,e,r);return await Promise.all(n.filter(i=>!o.includes(i)).map(async({api:i})=>i.close())),[...t.filter(i=>i.info.type!=="iab"),...o]},AH=(t,e,r)=>e==null?[]:t.filter(n=>n.info.metadata?.codexSessionId===e&&(r==null||n.info.metadata.codexAppBuildFlavor===r));
+JS
+
+    (
+        warn() { echo "[WARN] $*" >&2; }
+        info() { echo "[INFO] $*" >&2; }
+        # shellcheck disable=SC1091
+        source "$REPO_DIR/scripts/lib/bundled-plugins.sh"
+        patch_browser_use_iab_single_backend_fallback "$client"
+        patch_browser_use_iab_single_backend_fallback "$client"
+    )
+
+    assert_contains "$client" "codexLinuxIabSessionFallback"
+    [ "$(grep -o "codexLinuxIabSessionFallback" "$client" | wc -l)" = "1" ] \
+        || fail "Expected Browser Use IAB fallback patch to be idempotent"
+
+    node - "$client" <<'NODE'
+const fs = require("fs");
+const vm = require("vm");
+
+const client = process.argv[2];
+const source = fs.readFileSync(client, "utf8");
+
+function iab({ session, flavor = "desktop" }) {
+  return {
+    info: {
+      type: "iab",
+      metadata: {
+        codexSessionId: session,
+        codexAppBuildFlavor: flavor,
+      },
+    },
+  };
+}
+
+function load(platform = "linux") {
+  const context = { process: { platform } };
+  vm.createContext(context);
+  vm.runInContext(`${source}\nthis.selectIab = AH;`, context);
+  return context.selectIab;
+}
+
+const exact = iab({ session: "thread-a" });
+const fallback = iab({ session: "thread-b" });
+const wrongFlavor = iab({ session: "thread-b", flavor: "other" });
+const second = iab({ session: "thread-c" });
+const linuxSelect = load("linux");
+
+if (linuxSelect([exact, fallback], "thread-a", "desktop")[0] !== exact) {
+  throw new Error("exact session match must win before fallback");
+}
+if (linuxSelect([fallback], null, "desktop")[0] !== fallback) {
+  throw new Error("Linux must use one build-matched IAB when session metadata is absent");
+}
+if (linuxSelect([fallback], "missing", "desktop")[0] !== fallback) {
+  throw new Error("Linux must use one build-matched IAB when session metadata mismatches");
+}
+const multi = linuxSelect([fallback, second], "missing", "desktop");
+if (multi.length !== 2 || multi[0] !== fallback || multi[1] !== second) {
+  throw new Error("Linux must preserve ordered build-matched IABs when session metadata is stale");
+}
+if (linuxSelect([wrongFlavor], "missing", "desktop").length !== 0) {
+  throw new Error("Linux fallback must preserve build-flavor filtering");
+}
+if (load("darwin")([fallback], "missing", "desktop").length !== 0) {
+  throw new Error("single-IAB fallback must be Linux-only");
+}
+NODE
+}
+
+test_browser_use_iab_socket_ordering_patch_behavior() {
+    info "Checking Browser Use Linux IAB socket ordering"
+    local workspace="$TMP_DIR/browser-iab-socket-ordering"
+    local client="$workspace/browser-client.mjs"
+
+    mkdir -p "$workspace"
+    cat > "$client" <<'JS'
+import{readdir as Uk}from"node:fs/promises";import CH,{platform as jk}from"node:os";import qk from"node:path";var ab="/tmp/codex-browser-use",MH=async()=>(await Uk(ab)).map(e=>qk.resolve(ab,e)),BH=async()=>[];
+JS
+
+    (
+        warn() { echo "[WARN] $*" >&2; }
+        info() { echo "[INFO] $*" >&2; }
+        # shellcheck disable=SC1091
+        source "$REPO_DIR/scripts/lib/bundled-plugins.sh"
+        patch_browser_use_iab_socket_ordering "$client"
+        patch_browser_use_iab_socket_ordering "$client"
+    )
+
+    assert_contains "$client" "codexLinuxIabNewestSocketFirst"
+    assert_contains "$client" "stat as __codexLinuxIabSocketStat"
+    [ "$(grep -o "codexLinuxIabNewestSocketFirst" "$client" | wc -l)" = "1" ] \
+        || fail "Expected Browser Use socket ordering patch to be idempotent"
+
+    node --input-type=module - "$client" "$workspace" <<'NODE'
+import fs from "node:fs/promises";
+import path from "node:path";
+import vm from "node:vm";
+
+const client = process.argv[2];
+const workspace = process.argv[3];
+const source = await fs.readFile(client, "utf8");
+const dir = path.join(workspace, "sockets");
+await fs.mkdir(dir, { recursive: true });
+await fs.writeFile(path.join(dir, "old.sock"), "");
+await fs.writeFile(path.join(dir, "new.sock"), "");
+await fs.utimes(path.join(dir, "old.sock"), new Date(1000), new Date(1000));
+await fs.utimes(path.join(dir, "new.sock"), new Date(2000), new Date(2000));
+
+let runnable = source
+  .replace(/import\{readdir as ([A-Za-z_$][\w$]*),stat as ([A-Za-z_$][\w$]*)\}from"node:fs\/promises";/, "const { readdir: $1, stat: $2 } = fsPromises;")
+  .replace(/import CH,\{platform as jk\}from"node:os";/, "const CH = { platform: () => 'linux' }, jk = CH.platform;")
+  .replace(/import qk from"node:path";/, "const qk = pathModule;")
+  .replace('var ab="/tmp/codex-browser-use"', `var ab=${JSON.stringify(dir)}`);
+
+const context = { fsPromises: fs, pathModule: path };
+vm.createContext(context);
+vm.runInContext(`${runnable}\nthis.listSockets = MH;`, context);
+const sockets = await context.listSockets();
+if (!sockets[0].endsWith("new.sock") || !sockets[1].endsWith("old.sock")) {
+  throw new Error(`Expected newest socket first, got ${JSON.stringify(sockets)}`);
+}
+NODE
+}
+
 test_browser_use_node_repl_capability_guard() {
     info "Checking Browser Use nodeRepl capability guard"
     local workspace="$TMP_DIR/browser-node-repl-capability-guard"
@@ -3463,6 +3610,8 @@ test_browser_plugin_renamed_upstream_staging() {
     assert_contains "$browser_dir/scripts/browser-client.mjs" "codexLinuxSiteStatusAllowlistFallback"
     assert_not_contains "$browser_dir/scripts/browser-client.mjs" 'console.warn("codexLinuxSiteStatusAllowlistFallback"'
     assert_contains "$browser_dir/scripts/browser-client.mjs" "codexLinuxFileUrlPolicy"
+    assert_contains "$browser_dir/scripts/browser-client.mjs" "codexLinuxIabSessionFallback"
+    assert_contains "$browser_dir/scripts/browser-client.mjs" "codexLinuxIabNewestSocketFirst"
     assert_contains "$browser_dir/scripts/browser-client.mjs" 'protocol==="file:"'
     assert_not_contains "$browser_dir/scripts/browser-client.mjs" 'protocol==="data:"'
     assert_contains "$browser_dir/docs/api.md" "get_visible_dom(): Promise<string>"
@@ -5763,6 +5912,7 @@ main() {
     test_appimage_builder_smoke
     test_missing_input_failure
     test_make_install_reports_missing_native_packages
+    test_make_run_app_reports_missing_launcher
     test_make_build_app_uses_installer_download_flow_by_default
     test_make_build_app_fresh_uses_installer_fresh_flow
     test_fresh_reuse_dmg_uses_cache_when_metadata_matches
@@ -5801,6 +5951,8 @@ main() {
     test_bundled_plugin_builders_accept_prebuilt_binaries
     test_browser_use_node_repl_fallback_runtime
     test_browser_use_file_url_policy_patch_behavior
+    test_browser_use_iab_single_backend_fallback_patch_behavior
+    test_browser_use_iab_socket_ordering_patch_behavior
     test_browser_use_node_repl_capability_guard
     test_browser_plugin_renamed_upstream_staging
     test_browser_use_node_repl_glibc_pidfd_patch_static

@@ -1209,12 +1209,14 @@ test("model query patch deduplicates identical provider and display rows", async
           display_name: "CLIProxyAPI / Cursor Z.ai Coding / GLM 5.2",
           provider_display_name: "CLIProxyAPI / Cursor Z.ai Coding",
           model_provider: "codex_shim",
+          model: "glm-5.2",
         },
         {
           slug: "cursor-zai-coding-glm-5-2-44",
           display_name: "CLIProxyAPI / Cursor Z.ai Coding / GLM 5.2",
           provider_display_name: "CLIProxyAPI / Cursor Z.ai Coding",
           model_provider: "codex_shim",
+          model: "zai-coding/glm-5.2",
         },
       ],
     }),
@@ -1231,7 +1233,9 @@ test("model query patch deduplicates identical provider and display rows", async
   assert.equal(sandbox.result.data.length, 1);
   assert.equal(sandbox.result.data[0].model, "cursor-zai-coding-glm-5-2");
   assert.equal(sandbox.__codexLinuxCustomModelSlugs.has("cursor-zai-coding-glm-5-2"), true);
-  assert.equal(sandbox.__codexLinuxCustomModelSlugs.has("cursor-zai-coding-glm-5-2-44"), false);
+  assert.equal(sandbox.__codexLinuxCustomModelSlugs.has("cursor-zai-coding-glm-5-2-44"), true);
+  assert.equal(sandbox.__codexLinuxCustomModelProviders.get("cursor-zai-coding-glm-5-2-44"), "codex_shim");
+  assert.equal(sandbox.__codexLinuxCustomModelWireModels.get("cursor-zai-coding-glm-5-2-44"), "zai-coding/glm-5.2");
 });
 
 test("model query patch never registers an official slug for shim routing", async () => {
@@ -1531,10 +1535,12 @@ test("start conversation routing helper routes explicit providers without inject
     __codexLinuxCustomModelSlugs: new Set([
       "openrouter-qwen3-coder",
       "cursor-zai-coding-glm-5-2",
+      "cursor-zai-coding-glm-5-2-49",
     ]),
     __codexLinuxCustomModelProviders: new Map([
       ["openrouter-qwen3-coder", "openrouter"],
       ["cursor-zai-coding-glm-5-2", "codex_shim"],
+      ["cursor-zai-coding-glm-5-2-49", "codex_shim"],
     ]),
     __codexLinuxCustomModelProviderConfigs: new Map([
       [
@@ -1550,9 +1556,11 @@ test("start conversation routing helper routes explicit providers without inject
     __codexLinuxCustomModelWireModels: new Map([
       ["openrouter-qwen3-coder", "qwen/qwen3-coder"],
       ["cursor-zai-coding-glm-5-2", "z-ai/glm-5.2"],
+      ["cursor-zai-coding-glm-5-2-49", "zai-coding/glm-5.2"],
     ]),
     __codexLinuxCustomModelCatalogPaths: new Map([
       ["cursor-zai-coding-glm-5-2", "/fixture/codex-shim/custom_model_catalog.json"],
+      ["cursor-zai-coding-glm-5-2-49", "/fixture/codex-shim/custom_model_catalog.json"],
     ]),
   };
 
@@ -1561,6 +1569,7 @@ test("start conversation routing helper routes explicit providers without inject
       ROUTING_HELPER_SOURCE,
       "direct=codexLinuxCustomModelApplyRouting({config:{model_provider:`openai`},modelProvider:null,collaborationMode:{settings:{model:`openrouter-qwen3-coder`,reasoning_effort:`high`}}},`openrouter-qwen3-coder`);",
       "shim=codexLinuxCustomModelApplyRouting({config:{model_provider:`openai`},modelProvider:null},`cursor-zai-coding-glm-5-2`);",
+      "shimDuplicate=codexLinuxCustomModelApplyRouting({config:{model_provider:`openai`},modelProvider:null},`cursor-zai-coding-glm-5-2-49`);",
       "official=codexLinuxCustomModelApplyRouting({config:{model_provider:`openai`},modelProvider:null},`gpt-5.5`);",
     ].join(""),
     sandbox,
@@ -1580,6 +1589,12 @@ test("start conversation routing helper routes explicit providers without inject
   assert.equal(sandbox.shim.config.model_provider, "codex_shim");
   assert.equal(sandbox.shim.config.model_catalog_json, "/fixture/codex-shim/custom_model_catalog.json");
   assert.equal(sandbox.shim.config["model_providers.codex_shim"].base_url, "http://127.0.0.1:8765/v1");
+  assert.equal(sandbox.shimDuplicate.model, "zai-coding/glm-5.2");
+  assert.equal(sandbox.shimDuplicate.modelProvider, "codex_shim");
+  assert.equal(sandbox.shimDuplicate.config.model, "zai-coding/glm-5.2");
+  assert.equal(sandbox.shimDuplicate.config.model_provider, "codex_shim");
+  assert.equal(sandbox.shimDuplicate.config.model_catalog_json, "/fixture/codex-shim/custom_model_catalog.json");
+  assert.equal(sandbox.shimDuplicate.config["model_providers.codex_shim"].base_url, "http://127.0.0.1:8765/v1");
   assert.equal(sandbox.official.modelProvider, null);
   assert.equal(sandbox.official.config.model_provider, "openai");
 });

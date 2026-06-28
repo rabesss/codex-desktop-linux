@@ -108,6 +108,16 @@ function hasComputerUseLiteral(source) {
   return /(?:`computer-use`|"computer-use"|'computer-use')/.test(source);
 }
 
+function hasComputerUseNativeAppsMention(source) {
+  return source.includes("native-desktop-apps") &&
+    (
+      hasComputerUseLiteral(source) ||
+      source.includes("computer-use-native-desktop-app-icon") ||
+      source.includes("computerUse.nativeApps") ||
+      source.includes("computerUse.label")
+    );
+}
+
 function isComputerUseNameExpr(nameExpr, computerUseNameVar) {
   return /^(?:`computer-use`|"computer-use"|'computer-use')$/.test(nameExpr) ||
     nameExpr === computerUseNameVar ||
@@ -391,6 +401,51 @@ function applyLinuxComputerUseRendererAvailabilityPatch(currentSource) {
     },
   );
 
+  const currentRequiredFeaturesAvailabilityPattern =
+    /([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\(\{areRequiredFeaturesEnabled:([A-Za-z_$][\w$]*),enabled:([A-Za-z_$][\w$]*),isAnyFeatureLoading:([A-Za-z_$][\w$]*),isComputerUseGateEnabled:([A-Za-z_$][\w$]*),isHostCompatiblePlatform:([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\),isPlatformLoading:([A-Za-z_$][\w$]*),windowType:`electron`\}\)/g;
+  patchedSource = patchedSource.replace(
+    currentRequiredFeaturesAvailabilityPattern,
+    (
+      match,
+      resultVar,
+      helperVar,
+      requiredFeaturesVar,
+      enabledVar,
+      featureLoadingVar,
+      rolloutVar,
+      platformPredicateVar,
+      platformVar,
+      platformLoadingVar,
+      offset,
+    ) => {
+      const contextStart = Math.max(0, offset - 900);
+      const context = patchedSource.slice(contextStart, offset + match.length);
+      if (!context.includes(computerUseFeatureNeedle)) {
+        return match;
+      }
+      availabilityGateFound = true;
+      availabilityChanged = true;
+      return `${resultVar}=${helperVar}({areRequiredFeaturesEnabled:${platformVar}===\`linux\`||${requiredFeaturesVar},enabled:${enabledVar},isAnyFeatureLoading:${platformVar}!==\`linux\`&&${featureLoadingVar},isComputerUseGateEnabled:${platformVar}===\`linux\`||${rolloutVar},isHostCompatiblePlatform:${platformVar}===\`linux\`||${platformPredicateVar}(${platformVar}),isPlatformLoading:${platformLoadingVar},windowType:\`electron\`})`;
+    },
+  );
+
+  if (hasComputerUseNativeAppsMention(patchedSource)) {
+    const nativeAppsPlatformPattern =
+      /([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)&&\(([A-Za-z_$][\w$]*)===`macOS`\|\|\3===`windows`\)/g;
+    patchedSource = patchedSource.replace(
+      nativeAppsPlatformPattern,
+      (match, availabilityVar, enabledVar, platformVar, offset) => {
+        const contextStart = Math.max(0, offset - 900);
+        const context = patchedSource.slice(contextStart, offset + match.length + 900);
+        if (!hasComputerUseNativeAppsMention(context)) {
+          return match;
+        }
+        availabilityChanged = true;
+        return `${availabilityVar}=${enabledVar}&&(${platformVar}===\`macOS\`||${platformVar}===\`windows\`||${platformVar}===\`linux\`)`;
+      },
+    );
+  }
+
   if (availabilityChanged || availabilityAlreadyPatched()) {
     return patchedSource;
   }
@@ -446,9 +501,59 @@ function applyLinuxComputerUseInstallFlowPatch(currentSource) {
   return currentSource;
 }
 
+function applyLinuxComputerUseDetailRouteFallbackPatch(currentSource) {
+  if (currentSource.includes("codexLinuxComputerUseBundledDetailFallback")) {
+    return currentSource;
+  }
+
+  const fallbackPattern =
+    /function ([A-Za-z_$][\w$]*)\(\{fallbackRequestedPluginId:([A-Za-z_$][\w$]*),plugins:([A-Za-z_$][\w$]*),requestedPluginId:([A-Za-z_$][\w$]*)\}\)\{if\(([A-Za-z_$][\w$]*)\(\4\)\)\{let ([A-Za-z_$][\w$]*)=\3\.find\(([A-Za-z_$][\w$]*)=>([A-Za-z_$][\w$]*)\(\7,\4\)\);if\(\6!=null\)return \6\}let ([A-Za-z_$][\w$]*)=\3\.find\(([A-Za-z_$][\w$]*)=>([A-Za-z_$][\w$]*)\(\10,\4\)\)\?\?null;return \9!=null\|\|\2==null\|\|\2===\4\?\9:\1\(\{plugins:\3,requestedPluginId:\2\}\)\}/;
+
+  const match = currentSource.match(fallbackPattern);
+  if (match == null) {
+    const hasResolverLikeSignature =
+      /function [A-Za-z_$][\w$]*\(\{fallbackRequestedPluginId:[A-Za-z_$][\w$]*,plugins:[A-Za-z_$][\w$]*,requestedPluginId:[A-Za-z_$][\w$]*\}\)/.test(
+        currentSource,
+      );
+    if (hasResolverLikeSignature) {
+      console.warn(
+        "WARN: Could not find Computer Use plugin detail fallback resolver — skipping Linux Computer Use detail route patch",
+      );
+    }
+    return currentSource;
+  }
+
+  const [
+    original,
+    resolverFn,
+    fallbackRequestedPluginId,
+    pluginsVar,
+    requestedPluginId,
+    remotePredicateFn,
+    remoteMatchVar,
+    remoteItemVar,
+    remoteMatchFn,
+    exactMatchVar,
+    exactItemVar,
+    exactMatchFn,
+  ] = match;
+
+  const replacement = [
+    `function ${resolverFn}({fallbackRequestedPluginId:${fallbackRequestedPluginId},plugins:${pluginsVar},requestedPluginId:${requestedPluginId}}){`,
+    `if(${remotePredicateFn}(${requestedPluginId})){let ${remoteMatchVar}=${pluginsVar}.find(${remoteItemVar}=>${remoteMatchFn}(${remoteItemVar},${requestedPluginId}));if(${remoteMatchVar}!=null)return ${remoteMatchVar}}`,
+    `let ${exactMatchVar}=${pluginsVar}.find(${exactItemVar}=>${exactMatchFn}(${exactItemVar},${requestedPluginId}))??null;`,
+    `if(${exactMatchVar}==null&&${requestedPluginId}===\`computer-use\`)${exactMatchVar}=${pluginsVar}.find(${exactItemVar}=>typeof dP=="function"&&dP(${exactItemVar}.plugin.id)===\`computer-use\`&&${exactItemVar}.marketplaceName===\`openai-bundled\`)??null;`,
+    `return ${exactMatchVar}!=null||${fallbackRequestedPluginId}==null||${fallbackRequestedPluginId}===${requestedPluginId}?${exactMatchVar}:${resolverFn}({plugins:${pluginsVar},requestedPluginId:${fallbackRequestedPluginId}})`,
+    `/*codexLinuxComputerUseBundledDetailFallback*/}`,
+  ].join("");
+
+  return currentSource.slice(0, match.index) + replacement + currentSource.slice(match.index + original.length);
+}
+
 module.exports = {
   COMPUTER_USE_UI_ENV_VAR,
   COMPUTER_USE_UI_SETTINGS_KEY,
+  applyLinuxComputerUseDetailRouteFallbackPatch,
   applyLinuxComputerUseFeaturePatch,
   applyLinuxComputerUseInstallFlowPatch,
   applyLinuxComputerUsePluginGatePatch,

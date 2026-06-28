@@ -3,6 +3,8 @@
 const fs = require("node:fs");
 const path = require("node:path");
 
+const { escapeRegExp } = require("./shared.js");
+
 // Webview asset patches target hashed browser chunks copied out of app.asar.
 // They stay fail-soft because upstream chunk names and minified symbols drift.
 const LINUX_SAFE_MONOSPACE_FONT_STACK =
@@ -436,7 +438,9 @@ function applyLinuxAppServerFeatureEnablementPatch(currentSource) {
     "mentions_v2",
     "plugins",
     "remote_control",
+    "remote_plugin",
     "tool_call_mcp_elicitation",
+    "tool_search",
     "tool_suggest",
   ]);
   const defaultFeaturesMarker = "statsig_default_enable_features";
@@ -448,6 +452,36 @@ function applyLinuxAppServerFeatureEnablementPatch(currentSource) {
     return currentSource;
   }
 
+  function sanitizeFeatureArrayItems(featureArrayItems) {
+    return featureArrayItems
+      .split(",")
+      .filter((entry) => {
+        const featureMatch = entry.trim().match(/^`([^`]+)`$/u);
+        return featureMatch != null && supportedFeatures.has(featureMatch[1]);
+      })
+      .join(",");
+  }
+
+  function sanitizeFeatureArrayDeclaration(source, arrayVar) {
+    const arrayDeclarationRegex = new RegExp(
+      `(^|[^\\w$])((?:var\\s+)?${escapeRegExp(arrayVar)}=\\[)([^\\]]*?)(\\])`,
+      "u",
+    );
+    const match = source.match(arrayDeclarationRegex);
+    if (match == null) {
+      return source;
+    }
+    const [, boundary, prefix, featureArrayItems, suffix] = match;
+    const supportedFeatureArrayItems = sanitizeFeatureArrayItems(featureArrayItems);
+    if (supportedFeatureArrayItems === featureArrayItems) {
+      return source;
+    }
+    return source.replace(
+      arrayDeclarationRegex,
+      `${boundary}${prefix}${supportedFeatureArrayItems}${suffix}`,
+    );
+  }
+
   const featureArrayRegex =
     /var ([A-Za-z_$][\w$]*)=\[([^\]]*?)\];function ([A-Za-z_$][\w$]*)\(\)\{let [\s\S]{0,2400}?statsig_default_enable_features[\s\S]{0,2400}?set-experimental-feature-enablement-for-host/u;
   const featureArrayMatch = currentSource.match(featureArrayRegex);
@@ -457,11 +491,19 @@ function applyLinuxAppServerFeatureEnablementPatch(currentSource) {
     // that copies supported defaults, then adds a gated extra. The copied
     // defaults are Linux-safe; the trailing extra is not.
     const dynamicBuilderExtraRegex =
-      /(for\(let ([A-Za-z_$][\w$]*) of [A-Za-z_$][\w$]*\)\{let ([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\[\2\];\3!=null&&\(([A-Za-z_$][\w$]*)\[\2\]=\3\)\})return \4\[([A-Za-z_$][\w$]*)\]=([A-Za-z_$][\w$]*),\4\}/u;
+      /(for\(let ([A-Za-z_$][\w$]*) of ([A-Za-z_$][\w$]*)\)\{let ([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\[\2\];\4!=null&&\(([A-Za-z_$][\w$]*)\[\2\]=\4\)\})return \5\[([A-Za-z_$][\w$]*)\]=([A-Za-z_$][\w$]*),\5\}/u;
     const dynamicBuilderExtraMatch = currentSource.match(dynamicBuilderExtraRegex);
     if (dynamicBuilderExtraMatch != null) {
-      const [, loopBlock, , , enablementVar] = dynamicBuilderExtraMatch;
-      return currentSource.replace(
+      const [, loopBlock, , arrayVar, , enablementVar, featureKeyVar] = dynamicBuilderExtraMatch;
+      const featureKeyDeclaration = new RegExp(
+        `${escapeRegExp(featureKeyVar)}=\`remote_plugin\``,
+        "u",
+      );
+      const arraySanitizedSource = sanitizeFeatureArrayDeclaration(currentSource, arrayVar);
+      if (featureKeyDeclaration.test(currentSource)) {
+        return arraySanitizedSource;
+      }
+      return arraySanitizedSource.replace(
         dynamicBuilderExtraRegex,
         `${loopBlock}return ${enablementVar}}`,
       );
@@ -480,13 +522,7 @@ function applyLinuxAppServerFeatureEnablementPatch(currentSource) {
   }
 
   const [, arrayVar, featureArrayItems] = featureArrayMatch;
-  const supportedFeatureArrayItems = featureArrayItems
-    .split(",")
-    .filter((entry) => {
-      const featureMatch = entry.trim().match(/^`([^`]+)`$/u);
-      return featureMatch != null && supportedFeatures.has(featureMatch[1]);
-    })
-    .join(",");
+  const supportedFeatureArrayItems = sanitizeFeatureArrayItems(featureArrayItems);
   if (supportedFeatureArrayItems === featureArrayItems) {
     return currentSource;
   }

@@ -309,6 +309,17 @@ share a clean label under the same provider, keep that distinction in the
 route-stable slug or provider metadata instead of showing duplicate picker
 rows.
 
+Desktop still registers every valid custom slug from accepted catalog sources
+for routing, including duplicate or suffixed slugs that an older app-server
+catalog may already have returned. Visible de-duplication must not decide
+whether a selected slug routes through its custom `model_provider`; it only
+decides which extra rows Desktop adds to the picker.
+
+Machine-local relay endpoints and credential names belong in a private catalog
+source or local feature outside the public repository. Public docs and examples
+should describe only generic `env_key`, `env_http_headers`, or command-backed
+`auth` indirections, not workstation-specific secret names or paths.
+
 The Desktop model submenu groups rows by `provider_display_name` when more
 than one provider is present. Provider grouping is therefore a UI affordance
 driven by catalog metadata; it is not a reason to reintroduce

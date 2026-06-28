@@ -842,6 +842,194 @@ print(
 PY
 }
 
+patch_browser_use_iab_single_backend_fallback() {
+    local client="$1"
+
+    if grep -q "codexLinuxIabSessionFallback" "$client"; then
+        return 0
+    fi
+
+    python3 - "$client" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+path = Path(sys.argv[1])
+source = path.read_text(encoding="utf-8")
+
+three_arg = re.compile(
+    r'(?P<helper>[A-Za-z_$][\w$]*)=\((?P<items>[A-Za-z_$][\w$]*),'
+    r'(?P<session>[A-Za-z_$][\w$]*),(?P<flavor>[A-Za-z_$][\w$]*)\)=>'
+    r'(?P=session)==null\?\[\]:(?P=items)\.filter\((?P<item>[A-Za-z_$][\w$]*)=>'
+    r'(?P=item)\.info\.metadata\?\.codexSessionId===(?P=session)&&'
+    r'\((?P=flavor)==null\|\|(?P=item)\.info\.metadata\.codexAppBuildFlavor===(?P=flavor)\)\)'
+)
+
+two_arg = re.compile(
+    r'(?P<helper>[A-Za-z_$][\w$]*)=\((?P<items>[A-Za-z_$][\w$]*),'
+    r'(?P<session>[A-Za-z_$][\w$]*)\)=>'
+    r'(?P=session)==null\?\[\]:(?P=items)\.filter\((?P<item>[A-Za-z_$][\w$]*)=>'
+    r'(?P=item)\.info\.metadata\?\.codexSessionId===(?P=session)\)'
+)
+
+legacy_three_arg = re.compile(
+    r'(?P<helper>[A-Za-z_$][\w$]*)=\((?P<items>[A-Za-z_$][\w$]*),'
+    r'(?P<session>[A-Za-z_$][\w$]*),(?P<flavor>[A-Za-z_$][\w$]*)\)=>\{'
+    r'let (?P<candidates>[A-Za-z_$][\w$]*)=(?P=items)\.filter\('
+    r'(?P<item>[A-Za-z_$][\w$]*)=>(?P=flavor)==null\|\|'
+    r'(?P=item)\.info\.metadata\?\.codexAppBuildFlavor===(?P=flavor)\),'
+    r'(?P<matches>[A-Za-z_$][\w$]*)=(?P=session)==null\?\[\]:'
+    r'(?P=candidates)\.filter\((?P=item)=>'
+    r'(?P=item)\.info\.metadata\?\.codexSessionId===(?P=session)\);'
+    r'return (?P=matches)\.length>0\?(?P=matches):'
+    r'globalThis\.process\?\.platform==="linux"&&'
+    r'(?P=candidates)\.length===1\?(?P=candidates):\[\]'
+    r'/\*codexLinuxIabSingleBackendFallback\*/\}'
+)
+
+legacy_two_arg = re.compile(
+    r'(?P<helper>[A-Za-z_$][\w$]*)=\((?P<items>[A-Za-z_$][\w$]*),'
+    r'(?P<session>[A-Za-z_$][\w$]*)\)=>\{'
+    r'let (?P<matches>[A-Za-z_$][\w$]*)=(?P=session)==null\?\[\]:'
+    r'(?P=items)\.filter\((?P<item>[A-Za-z_$][\w$]*)=>'
+    r'(?P=item)\.info\.metadata\?\.codexSessionId===(?P=session)\);'
+    r'return (?P=matches)\.length>0\?(?P=matches):'
+    r'globalThis\.process\?\.platform==="linux"&&'
+    r'(?P=items)\.length===1\?(?P=items):\[\]'
+    r'/\*codexLinuxIabSingleBackendFallback\*/\}'
+)
+
+def write_three_arg(match):
+    helper = match.group("helper")
+    items = match.group("items")
+    session = match.group("session")
+    flavor = match.group("flavor")
+    candidate = match.group("item")
+    build_filtered = "__codexLinuxIabCandidates"
+    matched = "__codexLinuxIabMatches"
+    replacement = (
+        f'{helper}=({items},{session},{flavor})=>{{let {build_filtered}={items}.filter('
+        f'{candidate}=>{flavor}==null||{candidate}.info.metadata?.codexAppBuildFlavor==={flavor}),'
+        f'{matched}={session}==null?[]:{build_filtered}.filter('
+        f'{candidate}=>{candidate}.info.metadata?.codexSessionId==={session});'
+        f'return {matched}.length>0?{matched}:globalThis.process?.platform==="linux"&&'
+        f'{build_filtered}.length>0?{build_filtered}:[]/*codexLinuxIabSessionFallback*/}}'
+    )
+    path.write_text(source[:match.start()] + replacement + source[match.end():], encoding="utf-8")
+
+def write_two_arg(match):
+    helper = match.group("helper")
+    items = match.group("items")
+    session = match.group("session")
+    candidate = match.group("item")
+    matched = "__codexLinuxIabMatches"
+    replacement = (
+        f'{helper}=({items},{session})=>{{let {matched}={session}==null?[]:{items}.filter('
+        f'{candidate}=>{candidate}.info.metadata?.codexSessionId==={session});'
+        f'return {matched}.length>0?{matched}:globalThis.process?.platform==="linux"&&'
+        f'{items}.length>0?{items}:[]/*codexLinuxIabSessionFallback*/}}'
+    )
+    path.write_text(source[:match.start()] + replacement + source[match.end():], encoding="utf-8")
+
+match = legacy_three_arg.search(source)
+if match is not None:
+    write_three_arg(match)
+    raise SystemExit(0)
+
+match = legacy_two_arg.search(source)
+if match is not None:
+    write_two_arg(match)
+    raise SystemExit(0)
+
+match = three_arg.search(source)
+if match is not None:
+    write_three_arg(match)
+    raise SystemExit(0)
+
+match = two_arg.search(source)
+if match is not None:
+    write_two_arg(match)
+    raise SystemExit(0)
+
+if "codexSessionId" in source and "info.type" in source and 'type==="iab"' in source:
+    print(
+        "WARN: Could not find Browser Use IAB session filter insertion point — leaving browser-client.mjs unchanged",
+        file=sys.stderr,
+    )
+PY
+}
+
+patch_browser_use_iab_socket_ordering() {
+    local client="$1"
+
+    if grep -q "codexLinuxIabNewestSocketFirst" "$client"; then
+        return 0
+    fi
+
+    python3 - "$client" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+path = Path(sys.argv[1])
+source = path.read_text(encoding="utf-8")
+
+import_pattern = re.compile(
+    r'import\{readdir as (?P<readdir>[A-Za-z_$][\w$]*)\}from"node:fs/promises";'
+)
+import_match = import_pattern.search(source)
+if import_match is None:
+    print(
+        "WARN: Could not find Browser Use fs/promises readdir import — leaving socket order unchanged",
+        file=sys.stderr,
+    )
+    raise SystemExit(0)
+
+readdir_name = import_match.group("readdir")
+stat_name = "__codexLinuxIabSocketStat"
+source = (
+    source[:import_match.start()]
+    + f'import{{readdir as {readdir_name},stat as {stat_name}}}from"node:fs/promises";'
+    + source[import_match.end():]
+)
+
+listing_pattern = re.compile(
+    rf'(?P<helper>[A-Za-z_$][\w$]*)=async\(\)=>'
+    rf'\(await {re.escape(readdir_name)}\((?P<dir>[A-Za-z_$][\w$]*)\)\)'
+    rf'\.map\((?P<entry>[A-Za-z_$][\w$]*)=>'
+    rf'(?P<path>[A-Za-z_$][\w$]*)\.resolve\((?P=dir),(?P=entry)\)\)'
+)
+listing_match = listing_pattern.search(source)
+if listing_match is None:
+    print(
+        "WARN: Could not find Browser Use Unix socket listing helper — leaving socket order unchanged",
+        file=sys.stderr,
+    )
+    raise SystemExit(0)
+
+helper = listing_match.group("helper")
+directory = listing_match.group("dir")
+entry = listing_match.group("entry")
+path_var = listing_match.group("path")
+resolved = "__codexLinuxIabSocketPath"
+mtime = "__codexLinuxIabSocketMtime"
+replacement = (
+    f'{helper}=async()=>{{let __codexLinuxIabSockets=await Promise.all('
+    f'(await {readdir_name}({directory})).map(async {entry}=>{{'
+    f'let {resolved}={path_var}.resolve({directory},{entry}),{mtime}=0;'
+    f'try{{{mtime}=(await {stat_name}({resolved})).mtimeMs}}catch{{}}'
+    f'return{{path:{resolved},mtime:{mtime}}}}}));'
+    f'return __codexLinuxIabSockets.sort((e,t)=>t.mtime-e.mtime).map(e=>e.path)'
+    f'/*codexLinuxIabNewestSocketFirst*/}}'
+)
+
+path.write_text(
+    source[:listing_match.start()] + replacement + source[listing_match.end():],
+    encoding="utf-8",
+)
+PY
+}
+
 patch_browser_use_node_repl_env_guard() {
     local client="$1"
 
@@ -1052,6 +1240,8 @@ stage_browser_plugin_from_upstream() {
     patch_browser_use_native_pipe_import_meta_bridge "$target_client"
     patch_browser_use_site_status_allowlist_fallback "$target_client"
     patch_browser_use_file_url_policy "$target_client"
+    patch_browser_use_iab_single_backend_fallback "$target_client"
+    patch_browser_use_iab_socket_ordering "$target_client"
     patch_browser_use_documentation_notes "$target_plugin"
 
     info "Browser plugin staged from upstream DMG"

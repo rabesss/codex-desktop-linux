@@ -13,7 +13,10 @@ assets_dir="$dev_app_dir/content/webview/assets"
 if [[ ! -d "$assets_dir" ]]; then
   assets_dir="$dev_app_dir/resources/app.asar.unpacked/webview/assets"
 fi
-signals_bundle="$(find "$assets_dir" -maxdepth 1 \( -name 'app-server-manager-signals-*.js' -o -name 'thread-context-inputs-*.js' \) -print -quit)"
+signals_bundle="$(rg -l 'function codexLinuxCustomModelApplyRouting' "$assets_dir" --glob '*.js' | sed -n '1p' || true)"
+if [[ -z "${signals_bundle:-}" ]]; then
+  signals_bundle="$(find "$assets_dir" -maxdepth 1 \( -name 'app-server-manager-signals-*.js' -o -name 'thread-context-inputs-*.js' \) -print -quit)"
+fi
 model_query_bundle="$(rg -l 'codexLinuxCustomModelMergeListModels' "$assets_dir" --glob '*.js' | sed -n '1p' || true)"
 
 tmp_asar_dir=""
@@ -26,7 +29,10 @@ if [[ -z "${signals_bundle:-}" || -z "${model_query_bundle:-}" ]] && [[ -f "$dev
   tmp_asar_dir="$(mktemp -d)"
   npx --yes asar extract "$dev_app_dir/resources/app.asar" "$tmp_asar_dir"
   assets_dir="$tmp_asar_dir/webview/assets"
-  signals_bundle="$(find "$assets_dir" -maxdepth 1 \( -name 'app-server-manager-signals-*.js' -o -name 'thread-context-inputs-*.js' \) -print -quit)"
+  signals_bundle="$(rg -l 'function codexLinuxCustomModelApplyRouting' "$assets_dir" --glob '*.js' | sed -n '1p' || true)"
+  if [[ -z "${signals_bundle:-}" ]]; then
+    signals_bundle="$(find "$assets_dir" -maxdepth 1 \( -name 'app-server-manager-signals-*.js' -o -name 'thread-context-inputs-*.js' \) -print -quit)"
+  fi
   model_query_bundle="$(rg -l 'codexLinuxCustomModelMergeListModels' "$assets_dir" --glob '*.js' | sed -n '1p' || true)"
 fi
 
@@ -72,12 +78,13 @@ check_bundle_contains "$signals_bundle" 'if\(r==null\)return e' "fail-closed mis
 check_bundle_absent "$signals_bundle" '\?\?`codex_shim`' "implicit codex_shim fallback"
 check_bundle_absent "$signals_bundle" 'codexLinuxCustomModelApplyRouting\(\{threadId:.*\},[A-Za-z_$][A-Za-z0-9_$]*\?\?[A-Za-z_$][A-Za-z0-9_$]*\?\.settings\?\.model\)' "unsafe turn-start collaboration-mode fallback"
 check_bundle_absent "$signals_bundle" 'globalThis\.__codexLinuxCustomModelSlugs.*\^\(cursor-' "legacy prefix-based custom slug registration"
-rg -q 'updateThreadSettingsForNextTurn\([^)]*\)\{[A-Za-z_$][A-Za-z0-9_$]*=codexLinuxCustomModelApplyThreadSettings' "$signals_bundle"
-rg -q 'codexLinuxCustomModelNeedsProviderResume\(this\.getConversation' "$signals_bundle"
-rg -q 'sendRequest\(`thread/unsubscribe`.*resumeConversationForUnavailableOwner' "$signals_bundle"
-rg -q '[A-Za-z_$][A-Za-z0-9_$]*=codexLinuxCustomModelApplyRouting\(\{threadId:.*\},codexLinuxCustomModelRouteModel\([A-Za-z_$][A-Za-z0-9_$]*,[A-Za-z_$][A-Za-z0-9_$]*\?\.settings\?\.model\)\),[A-Za-z_$][A-Za-z0-9_$]*=\{threadId:' "$signals_bundle"
-rg -q 'codexLinuxCustomModelApplyRouting\(\{config:await .*buildThreadCodexConfig' "$signals_bundle"
-rg -q 'sendRequest\(`thread/fork`.*modelProvider:' "$signals_bundle"
+check_bundle_contains "$signals_bundle" '__codexLinuxCustomModelApplyThreadSettingsFn\?\.\(' "thread settings custom routing hook"
+check_bundle_contains "$signals_bundle" '__codexLinuxCustomModelNeedsProviderResumeFn\?\.\(this\.getConversation' "resume provider recovery hook"
+check_bundle_contains "$signals_bundle" 'sendRequest\(`thread/unsubscribe`.*resumeConversationForUnavailableOwner' "resume provider recovery handoff"
+check_bundle_contains "$signals_bundle" '__codexLinuxCustomModelRouteModelFn\?\.\(' "turn start route model selector hook"
+check_bundle_contains "$signals_bundle" 'sendRequest\(`turn/start`' "turn start request"
+check_bundle_contains "$signals_bundle" '__codexLinuxCustomModelApplyRoutingFn\?\.\(\{config:await .*buildThreadCodexConfig' "fork provider routing helper"
+check_bundle_contains "$signals_bundle" 'sendRequest\(`thread/fork`.*modelProvider:' "fork modelProvider payload"
 rg -q 'globalThis\.__codexLinuxCustomModelSlugs=new Set' "$model_query_bundle"
 check_bundle_contains "$model_query_bundle" 'globalThis\.__codexLinuxCustomModelProviders=new Map' "custom slug provider map"
 check_bundle_contains "$model_query_bundle" 'globalThis\.__codexLinuxCustomModelWireModels=new Map' "custom slug wire-model map"

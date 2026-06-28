@@ -91,27 +91,38 @@ function applyLinuxChromePluginAutoInstallPatch(currentSource) {
 }
 
 function applyLinuxChromeNativeHostRuntimePatch(currentSource) {
-  if (currentSource.includes("codexLinuxChromeNativeHostRuntimeFile")) {
-    return currentSource;
+  let helper = "";
+  if (!currentSource.includes("codexLinuxChromeNativeHostRuntimeFile")) {
+    const fsVar = requireName(currentSource, "node:fs");
+    const pathVar = requireName(currentSource, "node:path");
+    if (fsVar == null || pathVar == null) {
+      console.warn(
+        "WARN: Could not find fs/path aliases — skipping Linux Chrome native host runtime patch",
+      );
+      return currentSource;
+    }
+
+    helper =
+      `function codexLinuxChromeNativeHostRuntimeFile(e,t){if(process.platform!==\`linux\`||e==null)return null;for(let n of t){let t=(0,${pathVar}.join)(e,...n);try{if((0,${fsVar}.statSync)(t).isFile())return t}catch{}}return null}function codexLinuxChromeNativeHostRuntimeEnv(e){if(process.platform!==\`linux\`)return null;let t=process.env[e];if(t==null||t.length===0)return null;try{return(0,${fsVar}.statSync)(t).isFile()?t:null}catch{return null}}function codexLinuxChromeNativeHostRuntimePath(e){if(process.platform!==\`linux\`)return null;for(let t of(process.env.PATH??\`\`).split(\`:\`)){if(t.length===0)continue;let n=(0,${pathVar}.join)(t,e);try{if((0,${fsVar}.statSync)(n).isFile())return n}catch{}}return null}function codexLinuxChromeNativeHostRuntimeEntry(e,t){return e==null?null:{path:e,source:t}}`;
   }
 
-  const fsVar = requireName(currentSource, "node:fs");
-  const pathVar = requireName(currentSource, "node:path");
-  if (fsVar == null || pathVar == null) {
-    console.warn(
-      "WARN: Could not find fs/path aliases — skipping Linux Chrome native host runtime patch",
-    );
-    return currentSource;
-  }
+  let patchedSource = currentSource;
+  let changed = false;
+  const takePatch = (nextSource) => {
+    if (nextSource == null || nextSource === patchedSource) {
+      return false;
+    }
+    patchedSource = nextSource;
+    helper = "";
+    changed = true;
+    return true;
+  };
 
-  const helper =
-    `function codexLinuxChromeNativeHostRuntimeFile(e,t){if(process.platform!==\`linux\`||e==null)return null;for(let n of t){let t=(0,${pathVar}.join)(e,...n);try{if((0,${fsVar}.statSync)(t).isFile())return t}catch{}}return null}function codexLinuxChromeNativeHostRuntimeEnv(e){if(process.platform!==\`linux\`)return null;let t=process.env[e];if(t==null||t.length===0)return null;try{return(0,${fsVar}.statSync)(t).isFile()?t:null}catch{return null}}function codexLinuxChromeNativeHostRuntimePath(e){if(process.platform!==\`linux\`)return null;for(let t of(process.env.PATH??\`\`).split(\`:\`)){if(t.length===0)continue;let n=(0,${pathVar}.join)(t,e);try{if((0,${fsVar}.statSync)(n).isFile())return n}catch{}}return null}function codexLinuxChromeNativeHostRuntimeEntry(e,t){return e==null?null:{path:e,source:t}}`;
-  const modernRuntimeResolverPatch = applyModernChromeNativeHostRuntimePatch(
-    currentSource,
-    helper,
-  );
-  if (modernRuntimeResolverPatch != null) {
-    return modernRuntimeResolverPatch;
+  takePatch(applyModernChromeNativeHostRuntimePatch(patchedSource, helper));
+  takePatch(applyChromePluginCodexOnlyRuntimePatch(patchedSource, helper));
+  takePatch(applyChromePluginAppServerRuntimePatch(patchedSource, helper));
+  if (changed) {
+    return patchedSource;
   }
 
   const missingRuntimeMessages = [
