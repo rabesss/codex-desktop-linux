@@ -9,7 +9,7 @@
     "last_modified": "Sat, 27 Jun 2026 05:15:27 GMT",
     "approved_at": "2026-06-27T07:51:30Z",
     "approved_by": "manual",
-    "wrapper_min_commit": "f00de21d325512232ee3c0d26db22b77daf6ac3a",
+    "wrapper_min_commit": "3350c5878667599d3f1a296a40d1caf79bb76ce1",
     "patch_report": "patch-report.json",
     "notes": "Passed local upstream-build validation and workstation rebuild on 2026-06-27."
   },
