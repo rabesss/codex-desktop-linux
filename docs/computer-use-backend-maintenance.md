@@ -142,6 +142,7 @@ Common dependencies:
 | --- | --- | --- | --- | --- |
 | Accessibility tree | `at-spi2-core` | `at-spi2-core` | `at-spi2-core` | `at-spi2-core` |
 | Portal base | `xdg-desktop-portal` | `xdg-desktop-portal` | `xdg-desktop-portal` | `xdg-desktop-portal` |
+| Screenshot fallback | `gnome-screenshot` | `gnome-screenshot` | `gnome-screenshot` | `gnome-screenshot` |
 | Fallback input | `ydotool` or `ydotoold` | `ydotool` | `ydotool` | `ydotool` |
 
 Compositor-specific dependencies:

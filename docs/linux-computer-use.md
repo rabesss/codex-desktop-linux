@@ -7,8 +7,9 @@ the in-app Computer Use controls are disabled until you opt in.
 It supports:
 
 - app listing and accessibility trees through AT-SPI
-- screenshots through GNOME Shell DBus, XDG Desktop Portal, or Hyprland `grim`
-  region capture for verified targeted windows
+- bounded screenshots through GNOME Shell DBus, XDG Desktop Portal, or
+  `gnome-screenshot` fallback, plus Hyprland `grim` region capture for verified
+  targeted windows
 - window listing and focusing on GNOME, KWin/Plasma, Sway IPC, Hyprland,
   COSMIC, and i3
 - keyboard, text, click, scroll, and drag input through `/dev/uinput`, XDG
@@ -57,6 +58,12 @@ or screenshots:
 - sway/wlroots: `xdg-desktop-portal-wlr`
 - Hyprland: `xdg-desktop-portal-hyprland`
 - GNOME: usually available by default
+
+GNOME background or systemd-launched sessions can reject the GNOME Shell DBus
+and portal screenshot paths. Install `gnome-screenshot` to enable the final
+fallback, or set `COMPUTER_USE_LINUX_SCREENSHOT_BACKEND=gnome-screenshot` to
+force it while debugging. Other accepted override values are `gnome-shell` and
+`portal`.
 
 Hyprland targeted window screenshots also use `grim` when available:
 
