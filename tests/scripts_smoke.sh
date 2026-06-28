@@ -3144,6 +3144,8 @@ PY
     assert_contains "$REPO_DIR/.github/workflows/ci.yml" "tests/fixtures/create-packaged-app-fixture.sh codex-app"
     assert_contains "$REPO_DIR/.github/workflows/ci.yml" "for file in scripts/patches/"
     assert_contains "$REPO_DIR/.github/workflows/ci.yml" "make check-supported"
+    assert_contains "$REPO_DIR/.github/workflows/supported-docs.yml" "node scripts/ci/render-supported-md.js --output SUPPORTED.md"
+    assert_contains "$REPO_DIR/.github/workflows/supported-docs.yml" "docs: refresh supported versions"
     assert_contains "$REPO_DIR/scripts/ci/container-entrypoint.sh" "for file in scripts/patches/"
     assert_contains "$REPO_DIR/scripts/ci/container-entrypoint.sh" "make check-supported"
     assert_contains "$REPO_DIR/README.md" "SUPPORTED.md"

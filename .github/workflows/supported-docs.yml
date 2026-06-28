@@ -1,0 +1,64 @@
+name: Support Docs
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/supported-docs.yml"
+      - ".github/workflows/ci.yml"
+      - ".github/workflows/upstream-build-app.yml"
+      - ".github/workflows/upstream-approval-heartbeat.yml"
+      - ".github/workflows/shellcheck.yml"
+      - ".github/workflows/codespell.yml"
+      - ".github/workflows/install-deps.yml"
+      - ".github/workflows/cachix.yml"
+      - "flake.nix"
+      - "release/upstream-dmg-lock.json"
+      - "scripts/ci/render-supported-md.js"
+      - "scripts/ci/validate-upstream-dmg-lock.js"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: support-docs-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  refresh-supported-md:
+    name: Refresh SUPPORTED.md
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Regenerate support docs
+        run: |
+          set -euo pipefail
+          node scripts/ci/validate-upstream-dmg-lock.js release/upstream-dmg-lock.json
+          node scripts/ci/render-supported-md.js --output SUPPORTED.md
+
+      - name: Commit generated support docs
+        run: |
+          set -euo pipefail
+          git pull --ff-only origin "$GITHUB_REF_NAME"
+          node scripts/ci/validate-upstream-dmg-lock.js release/upstream-dmg-lock.json
+          node scripts/ci/render-supported-md.js --output SUPPORTED.md
+
+          if git diff --quiet -- SUPPORTED.md; then
+            echo "SUPPORTED.md is already current."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add SUPPORTED.md
+          git commit -m "docs: refresh supported versions [skip ci]"
+          git push

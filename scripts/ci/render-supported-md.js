@@ -14,6 +14,11 @@ const DEFAULT_REPOSITORY = "rabesss/codex-linux";
 
 const WORKFLOWS = [
   {
+    label: "Support Docs",
+    file: "supported-docs.yml",
+    validates: "Generated SUPPORTED.md refreshes when support metadata inputs change on main",
+  },
+  {
     label: "CI",
     file: "ci.yml",
     validates: "Rust, smoke tests, Debian/RPM/pacman fixture packages, and Nix metadata/evaluation",
@@ -277,6 +282,7 @@ ${renderNixPinsSection(nixPins)}
 | \`CI / Build RPM Package\` | A fixture app can be packaged as \`.rpm\` with the same required updater and update-builder contents. |
 | \`CI / Build Pacman Package\` | A fixture app can be packaged inside an Arch container with the same required updater and update-builder contents. |
 | \`CI / Nix Metadata\` | Committed Nix app, Electron, native-module, bundled CLI, and Browser Use runtime metadata is internally consistent, and the flake evaluates without building live fixed-output app payloads. |
+| \`Support Docs\` | Pushes to \`main\` that change support metadata inputs regenerate this file and commit the generated result when needed. |
 | \`Upstream DMG Watcher\` | Scheduled/manual automation can download the live official DMG, patch/build it, validate required patch points, and upload metadata-only candidate evidence or patch-drift reports. |
 | \`Install Dependencies\` | The dependency bootstrap script remains usable on the tested apt-based images. |
 

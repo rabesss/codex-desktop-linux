@@ -8,6 +8,7 @@ make supported
 
 CI checks this file on every push and pull request. Scheduled/manual workflows own live upstream DMG drift and optional cache population. The badges below are live GitHub workflow status links for `rabesss/codex-linux`.
 
+[![Support Docs](https://github.com/rabesss/codex-linux/actions/workflows/supported-docs.yml/badge.svg?branch=main)](https://github.com/rabesss/codex-linux/actions/workflows/supported-docs.yml)
 [![CI](https://github.com/rabesss/codex-linux/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/rabesss/codex-linux/actions/workflows/ci.yml)
 [![Upstream DMG Watcher](https://github.com/rabesss/codex-linux/actions/workflows/upstream-build-app.yml/badge.svg?branch=main)](https://github.com/rabesss/codex-linux/actions/workflows/upstream-build-app.yml)
 [![Upstream Approval Heartbeat](https://github.com/rabesss/codex-linux/actions/workflows/upstream-approval-heartbeat.yml/badge.svg?branch=main)](https://github.com/rabesss/codex-linux/actions/workflows/upstream-approval-heartbeat.yml)
@@ -39,7 +40,7 @@ CI checks this file on every push and pull request. Scheduled/manual workflows o
 | Last-Modified | `Sat, 27 Jun 2026 05:15:27 GMT` |
 | Approved at | `2026-06-27T07:51:30Z` |
 | Approved by | `manual` |
-| Minimum wrapper commit | `f00de21d325512232ee3c0d26db22b77daf6ac3a` |
+| Minimum wrapper commit | `3350c5878667599d3f1a296a40d1caf79bb76ce1` |
 | Patch report | `patch-report.json` |
 | Notes | Passed local upstream-build validation and workstation rebuild on 2026-06-27. |
 
@@ -70,6 +71,7 @@ Nix packaging is a separate validation surface from the default updater approval
 | `CI / Build RPM Package` | A fixture app can be packaged as `.rpm` with the same required updater and update-builder contents. |
 | `CI / Build Pacman Package` | A fixture app can be packaged inside an Arch container with the same required updater and update-builder contents. |
 | `CI / Nix Metadata` | Committed Nix app, Electron, native-module, bundled CLI, and Browser Use runtime metadata is internally consistent, and the flake evaluates without building live fixed-output app payloads. |
+| `Support Docs` | Pushes to `main` that change support metadata inputs regenerate this file and commit the generated result when needed. |
 | `Upstream DMG Watcher` | Scheduled/manual automation can download the live official DMG, patch/build it, validate required patch points, and upload metadata-only candidate evidence or patch-drift reports. |
 | `Install Dependencies` | The dependency bootstrap script remains usable on the tested apt-based images. |
 

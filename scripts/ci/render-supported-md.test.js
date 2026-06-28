@@ -59,10 +59,12 @@ test("renderSupportedMd explains supported pin, CI validation, and no-payload bo
   assert.match(markdown, /CI package jobs are validation jobs/);
   assert.match(markdown, /metadata and source only; no OpenAI app payload packages|metadata, hashes, logs, patch reports/);
   assert.match(markdown, /actions\/workflows\/ci\.yml\/badge\.svg/);
+  assert.match(markdown, /actions\/workflows\/supported-docs\.yml\/badge\.svg/);
   assert.match(markdown, /make install-guided/);
   assert.match(markdown, /Nix packaging is a separate validation surface/);
   assert.match(markdown, /without downloading the mutable live `Codex\.dmg`/);
   assert.match(markdown, /CI \/ Nix Metadata/);
+  assert.match(markdown, /Support Docs/);
   assert.match(markdown, /Upstream DMG Watcher/);
   assert.match(markdown, /26\.616\.81150/);
 });
