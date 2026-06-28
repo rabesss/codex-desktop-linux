@@ -26,6 +26,15 @@ function git(repoDir, args) {
   return result.stdout.trim();
 }
 
+function gitClone(args) {
+  const result = spawnSync("git", ["clone", ...args], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  assert.equal(result.status, 0, result.stderr);
+  return result.stdout.trim();
+}
+
 function createRepoWithTwoCommits() {
   const repoDir = tempDir("codex-upstream-dmg-lock-repo-");
   git(repoDir, ["init", "-q"]);
@@ -132,6 +141,25 @@ test("validator rejects a candidate with a stale wrapper minimum", () => {
 
     assert.match(failures, /candidate[.]wrapper_min_commit: stale wrapper minimum/);
   } finally {
+    fs.rmSync(repoDir, { recursive: true, force: true });
+  }
+});
+
+test("validator explains shallow checkouts when wrapper commit history is missing", () => {
+  const { repoDir, first } = createRepoWithTwoCommits();
+  const shallowDir = tempDir("codex-upstream-dmg-lock-shallow-");
+  try {
+    fs.rmSync(shallowDir, { recursive: true, force: true });
+    gitClone(["--depth", "1", `file://${repoDir}`, shallowDir]);
+    assert.equal(git(shallowDir, ["rev-parse", "--is-shallow-repository"]), "true");
+
+    const failures = validateLock(lockWithApproved(first), { repoDir: shallowDir }).join("\n");
+
+    assert.match(failures, /approved[.]wrapper_min_commit: commit does not exist/);
+    assert.match(failures, /fetch full history before validating wrapper_min_commit/);
+    assert.match(failures, /fetch-depth: 0/);
+  } finally {
+    fs.rmSync(shallowDir, { recursive: true, force: true });
     fs.rmSync(repoDir, { recursive: true, force: true });
   }
 });

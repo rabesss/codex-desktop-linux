@@ -1832,6 +1832,7 @@ test_upstream_build_app_workflow_tracks_dmg_metadata() {
     assert_file_exists "$workflow"
     assert_contains "$workflow" 'name: Upstream DMG Watcher'
     assert_contains "$workflow" 'workflow_dispatch:'
+    assert_contains "$workflow" 'fetch-depth: 0'
     assert_not_contains "$workflow" 'pull_request:'
     assert_not_contains "$workflow" 'branches:'
     assert_contains "$workflow" 'UPSTREAM_DMG_URL: https://persistent.oaistatic.com/codex-app-prod/Codex.dmg'
@@ -1845,8 +1846,28 @@ test_upstream_build_app_workflow_tracks_dmg_metadata() {
     assert_contains "$workflow" 'node scripts/ci/write-upstream-drift-report.js'
     assert_contains "$workflow" 'upstream-dmg-patch-drift-metadata'
     assert_contains "$workflow" 'make build-app DMG=/tmp/codex-upstream-ci/Codex.dmg'
+    assert_contains "$workflow" 'render-supported-md.js --summary-out'
+    assert_not_contains "$workflow" 'render-supported-md.js --check --summary-out'
     assert_contains "$workflow" 'DMG Last-Modified'
     assert_contains "$workflow" 'DMG SHA-256'
+}
+
+test_support_metadata_workflows_are_resilient() {
+    info "Checking support metadata workflow checkout depth and ownership boundaries"
+    local heartbeat="$REPO_DIR/.github/workflows/upstream-approval-heartbeat.yml"
+    local supported_docs="$REPO_DIR/.github/workflows/supported-docs.yml"
+
+    assert_file_exists "$heartbeat"
+    assert_contains "$heartbeat" 'name: Upstream Approval Heartbeat'
+    assert_contains "$heartbeat" 'fetch-depth: 0'
+    assert_contains "$heartbeat" 'node scripts/ci/validate-upstream-dmg-lock.js release/upstream-dmg-lock.json'
+    assert_contains "$heartbeat" 'node scripts/ci/render-supported-md.js --check'
+
+    assert_file_exists "$supported_docs"
+    assert_contains "$supported_docs" 'name: Support Docs'
+    assert_contains "$supported_docs" 'fetch-depth: 0'
+    assert_contains "$supported_docs" 'node scripts/ci/render-supported-md.js --output SUPPORTED.md'
+    assert_contains "$supported_docs" 'docs: refresh supported versions'
 }
 
 test_installer_detects_electron_version_from_plist() {
@@ -5937,6 +5958,7 @@ main() {
     test_setup_native_wizard_uinput_stat_is_bounded
     test_setup_native_wizard_sway_hint_mentions_sway_ipc
     test_upstream_build_app_workflow_tracks_dmg_metadata
+    test_support_metadata_workflows_are_resilient
     test_installer_detects_electron_version_from_plist
     test_installer_keeps_electron_fallback_for_bad_metadata
     test_installer_normalizes_relative_linux_features_config

@@ -22,6 +22,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -195,7 +197,7 @@ jobs:
 
       - name: Write supported-version summary
         if: steps.patch-validation.outcome == 'success'
-        run: node scripts/ci/render-supported-md.js --check --summary-out "$GITHUB_STEP_SUMMARY"
+        run: node scripts/ci/render-supported-md.js --summary-out "$GITHUB_STEP_SUMMARY" --stdout > /dev/null
 
       - name: Open or update candidate promotion issue
         if: steps.patch-validation.outcome == 'success' && steps.upstream-lock.outputs.is_drift == 'true'

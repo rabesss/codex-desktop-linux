@@ -328,16 +328,27 @@ function gitOk(repoDir, args) {
   return result.status === 0;
 }
 
+function isShallowRepository(repoDir) {
+  return gitCapture(repoDir, ["rev-parse", "--is-shallow-repository"]) === "true";
+}
+
+function fullHistoryHint(repoDir) {
+  if (!isShallowRepository(repoDir)) {
+    return "";
+  }
+  return "; fetch full history before validating wrapper_min_commit (for GitHub Actions checkout, set fetch-depth: 0)";
+}
+
 function validateCommitReachability(repoDir, commit, pointer, head, failures) {
   if (!COMMIT_PATTERN.test(commit)) {
     return false;
   }
   if (!gitOk(repoDir, ["cat-file", "-e", `${commit}^{commit}`])) {
-    failures.push(`${pointer}: commit does not exist in ${repoDir}`);
+    failures.push(`${pointer}: commit does not exist in ${repoDir}${fullHistoryHint(repoDir)}`);
     return false;
   }
   if (!gitOk(repoDir, ["merge-base", "--is-ancestor", commit, head])) {
-    failures.push(`${pointer}: commit must be reachable from current HEAD`);
+    failures.push(`${pointer}: commit must be reachable from current HEAD${fullHistoryHint(repoDir)}`);
     return false;
   }
   return true;
