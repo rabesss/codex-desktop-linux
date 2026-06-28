@@ -80,6 +80,12 @@ const ROUTING_HELPER_SOURCE = [
   "function codexLinuxCustomModelApplyRouting(e,t){if(!codexLinuxCustomModelCustomSlug(t))return e;let n=codexLinuxCustomModelSlugKey(t),r=codexLinuxCustomModelProviderForSlug(t);if(r==null)return e;let i=codexLinuxCustomModelWireModel(t),a=globalThis.__codexLinuxCustomModelCatalogPaths?.get(n),o=globalThis.__codexLinuxCustomModelRuntimeConfig?.get(n)??{},s={...e.config,model:i,model_provider:r,...o,...(a==null?{}:{model_catalog_json:a})},c=codexLinuxCustomModelProviderConfig(r);c&&(s[`model_providers.${r}`]={...c,...e.config?.[`model_providers.${r}`]});let l=e?.collaborationMode==null?e?.collaborationMode:{...e.collaborationMode,settings:{...e.collaborationMode.settings,model:i}};return{...e,model:i,modelProvider:r,config:s,collaborationMode:l}}",
   "function codexLinuxCustomModelApplyThreadSettings(e){let t=e?.model??e?.collaborationMode?.settings?.model;if(!codexLinuxCustomModelCustomSlug(t))return e;let n=codexLinuxCustomModelApplyRouting({config:e?.config??{}},t);return{...e,model:n.model,modelProvider:n.modelProvider,config:n.config,collaborationMode:e?.collaborationMode==null?e?.collaborationMode:{...e.collaborationMode,settings:{...e.collaborationMode.settings,model:n.model}}}}",
   "function codexLinuxCustomModelNeedsProviderResume(e,t){let n=t?.model??t?.collaborationMode?.settings?.model;if(typeof n!=`string`||n.trim().length===0)return!1;let r=e?.modelProvider??e?.model_provider??codexLinuxCustomModelProviderForSlug(e?.latestModel??e?.latestCollaborationMode?.settings?.model),i=codexLinuxCustomModelProviderForSlug(n);return(r??null)!==(i??null)}",
+  "globalThis.__codexLinuxCustomModelCustomSlugFn=codexLinuxCustomModelCustomSlug;",
+  "globalThis.__codexLinuxCustomModelSupportsToolsFn=codexLinuxCustomModelSupportsTools;",
+  "globalThis.__codexLinuxCustomModelRouteModelFn=codexLinuxCustomModelRouteModel;",
+  "globalThis.__codexLinuxCustomModelApplyRoutingFn=codexLinuxCustomModelApplyRouting;",
+  "globalThis.__codexLinuxCustomModelApplyThreadSettingsFn=codexLinuxCustomModelApplyThreadSettings;",
+  "globalThis.__codexLinuxCustomModelNeedsProviderResumeFn=codexLinuxCustomModelNeedsProviderResume;",
 ].join("");
 const ROUTING_INSERTION_VARIANTS = ["var kg=5e3,Ag=class{", "var Qg=5e3,$g=class{", "WR=5e3,GR=class{"];
 const ROUTING_INSERTION_REGEX =
@@ -104,7 +110,7 @@ const ROUTING_NEEDLE_REGEX =
 const CREATE_CONVERSATION_ROUTING_REGEX =
   /(threadCreation\.createConversation\(\{[\s\S]{0,1600}?collaborationMode:([A-Za-z_$][\w$]*)[\s\S]{0,1600}?config:)([A-Za-z_$][\w$]*)(,projectAssignment:)/u;
 const CREATE_CONVERSATION_ROUTING_PATCHED_REGEX =
-  /threadCreation\.createConversation\(\{[\s\S]{0,1600}?config:codexLinuxCustomModelApplyRouting\(\{config:[A-Za-z_$][\w$]*\?\?\{\}\},[A-Za-z_$][\w$]*\?\.settings\?\.model\)\.config,projectAssignment:/u;
+  /threadCreation\.createConversation\(\{[\s\S]{0,1600}?config:globalThis\.__codexLinuxCustomModelApplyRoutingFn\?\.\(\{config:[A-Za-z_$][\w$]*\?\?\{\}\},[A-Za-z_$][\w$]*\?\.settings\?\.model\)\?\.config\?\?[A-Za-z_$][\w$]*\?\?\{\},projectAssignment:/u;
 const FORK_ROUTING_REGEX =
   /let ([A-Za-z_$][\w$]*)=await ([A-Za-z_$][\w$]*)\.buildThreadCodexConfig\(([A-Za-z_$][\w$]*)\?\?([A-Za-z_$][\w$]*)\?\.cwd\?\?null\),([A-Za-z_$][\w$]*)=await \2\.sendRequest\(`thread\/fork`,\{threadId:([A-Za-z_$][\w$]*),path:([A-Za-z_$][\w$]*)\?\?null,cwd:\3,threadSource:`user`,\.\.\.\1==null\?\{\}:\{config:\1\},/u;
 const FORK_ROUTING_CURRENT_REGEX =
@@ -112,19 +118,19 @@ const FORK_ROUTING_CURRENT_REGEX =
 const FORK_ROUTING_INLINE_CONFIG_REGEX =
   /let ([A-Za-z_$][\w$]*)=await ([A-Za-z_$][\w$]*)\.buildThreadCodexConfig\(([A-Za-z_$][\w$]*)\?\?([A-Za-z_$][\w$]*)\?\.cwd\?\?null\),([A-Za-z_$][\w$]*)=await \2\.sendRequest\(`thread\/fork`,\{threadId:([A-Za-z_$][\w$]*),path:([A-Za-z_$][\w$]*)\?\?null,cwd:\3,threadSource:([A-Za-z_$][\w$]*),config:\1\?\?void 0,/u;
 const FORK_ROUTING_MARKER =
-  "codexLinuxCustomModelApplyRouting({config:await";
+  "globalThis.__codexLinuxCustomModelApplyRoutingFn?.({config:await";
 const THREAD_SETTINGS_UPDATE_REGEX =
   /async updateThreadSettingsForNextTurn\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\{let ([A-Za-z_$][\w$]*)=this\.pendingThreadSettingsUpdates\.get\(\1\),/u;
 const THREAD_SETTINGS_UPDATE_PATCHED_REGEX =
-  /async updateThreadSettingsForNextTurn\([A-Za-z_$][\w$]*,([A-Za-z_$][\w$]*)\)\{\1=codexLinuxCustomModelApplyThreadSettings\(\1\);let [A-Za-z_$][\w$]*=this\.pendingThreadSettingsUpdates\.get\([A-Za-z_$][\w$]*\),/u;
+  /async updateThreadSettingsForNextTurn\([A-Za-z_$][\w$]*,([A-Za-z_$][\w$]*)\)\{\1=globalThis\.__codexLinuxCustomModelApplyThreadSettingsFn\?\.\(\1\)\?\?\1;let [A-Za-z_$][\w$]*=this\.pendingThreadSettingsUpdates\.get\([A-Za-z_$][\w$]*\),/u;
 const THREAD_SETTINGS_PROVIDER_RESUME_MARKER =
-  "codexLinuxCustomModelNeedsProviderResume(this.getConversation(";
+  "globalThis.__codexLinuxCustomModelNeedsProviderResumeFn?.(this.getConversation(";
 const THREAD_SETTINGS_PROVIDER_RESUME_NEEDLE =
   "if(this.threadSettingsUpdateSupport!==`unsupported`)try";
 const TURN_START_ROUTING_REGEX =
   /([A-Za-z_$][\w$]*)=\{threadId:[A-Za-z_$][\w$]*,clientUserMessageId:[\s\S]{0,1200}?model:([A-Za-z_$][\w$]*)[\s\S]{0,1200}?collaborationMode:([A-Za-z_$][\w$]*)\?\?null[\s\S]{0,1200}?attachments:[A-Za-z_$][\w$]*\.attachments\?\?\[\]\},([A-Za-z_$][\w$]*)=\{threadId:/u;
 const TURN_START_ROUTING_PATCHED_REGEX =
-  /[A-Za-z_$][\w$]*=codexLinuxCustomModelApplyRouting\(\{threadId:[A-Za-z_$][\w$]*,clientUserMessageId:[\s\S]{0,1200}?model:([A-Za-z_$][\w$]*)[\s\S]{0,1200}?collaborationMode:([A-Za-z_$][\w$]*)\?\?null[\s\S]{0,1200}?attachments:[A-Za-z_$][\w$]*\.attachments\?\?\[\]\},codexLinuxCustomModelRouteModel\(\1,\2\?\.settings\?\.model\)\),[A-Za-z_$][\w$]*=\{threadId:/u;
+  /[A-Za-z_$][\w$]*=globalThis\.__codexLinuxCustomModelApplyRoutingFn\?\.\(\{threadId:[A-Za-z_$][\w$]*,clientUserMessageId:[\s\S]{0,1200}?model:([A-Za-z_$][\w$]*)[\s\S]{0,1200}?collaborationMode:([A-Za-z_$][\w$]*)\?\?null[\s\S]{0,1200}?attachments:[A-Za-z_$][\w$]*\.attachments\?\?\[\]\},globalThis\.__codexLinuxCustomModelRouteModelFn\?\.\(\1,\2\?\.settings\?\.model\)\?\?\1\)??[A-Za-z_$][\w$]*,[A-Za-z_$][\w$]*=\{threadId:/u;
 const TURN_START_ROUTING_UNSAFE_FALLBACK_PATCHED_REGEX =
   /([A-Za-z_$][\w$]*)=codexLinuxCustomModelApplyRouting\(\{threadId:[A-Za-z_$][\w$]*,clientUserMessageId:[\s\S]{0,1200}?model:([A-Za-z_$][\w$]*)[\s\S]{0,1200}?collaborationMode:([A-Za-z_$][\w$]*)\?\?null[\s\S]{0,1200}?attachments:[A-Za-z_$][\w$]*\.attachments\?\?\[\]\},\2\?\?\3\?\.settings\?\.model\),([A-Za-z_$][\w$]*)=\{threadId:/u;
 const TURN_START_ROUTING_LEGACY_PATCHED_REGEX =
@@ -132,11 +138,11 @@ const TURN_START_ROUTING_LEGACY_PATCHED_REGEX =
 const RESUME_SKIP_DYNAMIC_TOOLS_REGEX =
   /buildNewConversationParams\((\w+),(\w+),(\w+)\[0\]\?\?`\/`,(\w+),(\w+)\.approvalsReviewer,\{skipDynamicTools:!0,threadId:(\w+)\}\)/u;
 const RESUME_SKIP_DYNAMIC_TOOLS_REPLACEMENT =
-  "buildNewConversationParams($1,$2,$3[0]??`/`,$4,$5.approvalsReviewer,{skipDynamicTools:!codexLinuxCustomModelSupportsTools($1),threadId:$6})";
+  "buildNewConversationParams($1,$2,$3[0]??`/`,$4,$5.approvalsReviewer,{skipDynamicTools:!globalThis.__codexLinuxCustomModelSupportsToolsFn?.($1),threadId:$6})";
 const RESUME_DYNAMIC_TOOLS_PAYLOAD_NEEDLE =
   "personality:p?.personality===void 0?f?.personality??A.personality:p.personality,excludeTurns:b,...b?{initialTurnsPage:{limit:5,itemsView:`full`}}:{}})";
 const RESUME_DYNAMIC_TOOLS_PAYLOAD_PATCH =
-  "personality:p?.personality===void 0?f?.personality??A.personality:p.personality,excludeTurns:b,...!codexLinuxCustomModelSupportsTools(A.model??A.collaborationMode?.settings?.model)||A.dynamicTools==null?{}:{dynamicTools:A.dynamicTools},...b?{initialTurnsPage:{limit:5,itemsView:`full`}}:{}})";
+  "personality:p?.personality===void 0?f?.personality??A.personality:p.personality,excludeTurns:b,...!globalThis.__codexLinuxCustomModelSupportsToolsFn?.(A.model??A.collaborationMode?.settings?.model)||A.dynamicTools==null?{}:{dynamicTools:A.dynamicTools},...b?{initialTurnsPage:{limit:5,itemsView:`full`}}:{}})";
 const MODEL_TOOLTIP_HELPER_NAME = "codexLinuxCustomModelTooltip";
 const MODEL_TOOLTIP_HELPER_SOURCE = [
   "function codexLinuxCustomModelTooltipValue(e){return typeof e==`string`&&e.trim().length>0?e.trim():typeof e==`number`&&Number.isFinite(e)?String(e):null}",
@@ -441,12 +447,12 @@ function applyCustomModelRoutingPatch(source) {
     }
     patched = patched.replace(
       CREATE_CONVERSATION_ROUTING_REGEX,
-      `$1codexLinuxCustomModelApplyRouting({config:$3??{}},$2?.settings?.model).config$4`,
+      `$1globalThis.__codexLinuxCustomModelApplyRoutingFn?.({config:$3??{}},$2?.settings?.model)?.config??$3??{}$4`,
     );
   }
 
   const autoTitlePatchedRegex =
-    /skipAutoTitleGeneration:[A-Za-z_$][\w$]*=codexLinuxCustomModelCustomSlug\([A-Za-z_$][\w$]*\?\.settings\?\.model\)/u;
+    /skipAutoTitleGeneration:[A-Za-z_$][\w$]*=globalThis\.__codexLinuxCustomModelCustomSlugFn\?\.\([A-Za-z_$][\w$]*\?\.settings\?\.model\)===!0/u;
   if (!autoTitlePatchedRegex.test(patched) && patched.includes("skipAutoTitleGeneration")) {
     const autoTitleRegex =
       /(async startConversation\(\{[^}]{0,1200}?collaborationMode:([A-Za-z_$][\w$]*)[^}]{0,1200}?skipAutoTitleGeneration:[A-Za-z_$][\w$]*=)!1(,additionalDeveloperInstructions:)/u;
@@ -458,7 +464,7 @@ function applyCustomModelRoutingPatch(source) {
     }
     patched = patched.replace(
       autoTitleMatch[0],
-      `${autoTitleMatch[1]}codexLinuxCustomModelCustomSlug(${autoTitleMatch[2]}?.settings?.model)${autoTitleMatch[3]}`,
+      `${autoTitleMatch[1]}globalThis.__codexLinuxCustomModelCustomSlugFn?.(${autoTitleMatch[2]}?.settings?.model)===!0${autoTitleMatch[3]}`,
     );
   }
 
@@ -490,7 +496,7 @@ function applyCustomModelForkRoutingPatch(source) {
         pathVar,
         threadSourceVar,
       ) =>
-        `let ${configVar}=codexLinuxCustomModelApplyRouting({config:await ${managerVar}.buildThreadCodexConfig(${cwdVar}??${conversationVar}?.cwd??null)},${conversationVar}?.latestModel??${conversationVar}?.latestCollaborationMode?.settings?.model??\`\`),${responseVar}=await ${managerVar}.sendRequest(\`thread/fork\`,{threadId:${threadIdVar},path:${pathVar}??null,cwd:${cwdVar},threadSource:${threadSourceVar},...${configVar}.model==null?{}:{model:${configVar}.model},...${configVar}.modelProvider==null?{}:{modelProvider:${configVar}.modelProvider},...${configVar}.config==null?{}:{config:${configVar}.config},`,
+        `let ${configVar}=globalThis.__codexLinuxCustomModelApplyRoutingFn?.({config:await ${managerVar}.buildThreadCodexConfig(${cwdVar}??${conversationVar}?.cwd??null)},${conversationVar}?.latestModel??${conversationVar}?.latestCollaborationMode?.settings?.model??\`\`)??{},${responseVar}=await ${managerVar}.sendRequest(\`thread/fork\`,{threadId:${threadIdVar},path:${pathVar}??null,cwd:${cwdVar},threadSource:${threadSourceVar},...${configVar}.model==null?{}:{model:${configVar}.model},...${configVar}.modelProvider==null?{}:{modelProvider:${configVar}.modelProvider},...${configVar}.config==null?{}:{config:${configVar}.config},`,
     );
   }
 
@@ -509,7 +515,7 @@ function applyCustomModelForkRoutingPatch(source) {
         pathVar,
         threadSourceVar,
       ) =>
-        `let ${configVar}=codexLinuxCustomModelApplyRouting({config:await ${managerVar}.buildThreadCodexConfig(${cwdVar}??${conversationVar}?.cwd??null)},${conversationVar}?.latestModel??${conversationVar}?.latestCollaborationMode?.settings?.model??\`\`),${responseVar}=await ${managerVar}.sendRequest(\`thread/fork\`,{threadId:${threadIdVar},path:${pathVar}??null,cwd:${cwdVar},threadSource:${threadSourceVar},...${configVar}.model==null?{}:{model:${configVar}.model},...${configVar}.modelProvider==null?{}:{modelProvider:${configVar}.modelProvider},...${configVar}.config==null?{}:{config:${configVar}.config},`,
+        `let ${configVar}=globalThis.__codexLinuxCustomModelApplyRoutingFn?.({config:await ${managerVar}.buildThreadCodexConfig(${cwdVar}??${conversationVar}?.cwd??null)},${conversationVar}?.latestModel??${conversationVar}?.latestCollaborationMode?.settings?.model??\`\`)??{},${responseVar}=await ${managerVar}.sendRequest(\`thread/fork\`,{threadId:${threadIdVar},path:${pathVar}??null,cwd:${cwdVar},threadSource:${threadSourceVar},...${configVar}.model==null?{}:{model:${configVar}.model},...${configVar}.modelProvider==null?{}:{modelProvider:${configVar}.modelProvider},...${configVar}.config==null?{}:{config:${configVar}.config},`,
     );
   }
 
@@ -530,7 +536,7 @@ function applyCustomModelForkRoutingPatch(source) {
       threadIdVar,
       pathVar,
     ) =>
-      `let ${configVar}=codexLinuxCustomModelApplyRouting({config:await ${managerVar}.buildThreadCodexConfig(${cwdVar}??${conversationVar}?.cwd??null)},${conversationVar}?.latestModel??${conversationVar}?.latestCollaborationMode?.settings?.model??\`\`),${responseVar}=await ${managerVar}.sendRequest(\`thread/fork\`,{threadId:${threadIdVar},path:${pathVar}??null,cwd:${cwdVar},threadSource:\`user\`,...${configVar}.model==null?{}:{model:${configVar}.model},...${configVar}.modelProvider==null?{}:{modelProvider:${configVar}.modelProvider},...${configVar}.config==null?{}:{config:${configVar}.config},`,
+      `let ${configVar}=globalThis.__codexLinuxCustomModelApplyRoutingFn?.({config:await ${managerVar}.buildThreadCodexConfig(${cwdVar}??${conversationVar}?.cwd??null)},${conversationVar}?.latestModel??${conversationVar}?.latestCollaborationMode?.settings?.model??\`\`)??{},${responseVar}=await ${managerVar}.sendRequest(\`thread/fork\`,{threadId:${threadIdVar},path:${pathVar}??null,cwd:${cwdVar},threadSource:\`user\`,...${configVar}.model==null?{}:{model:${configVar}.model},...${configVar}.modelProvider==null?{}:{modelProvider:${configVar}.modelProvider},...${configVar}.config==null?{}:{config:${configVar}.config},`,
   );
 }
 
@@ -549,7 +555,7 @@ function applyCustomModelThreadSettingsRoutingPatch(source) {
     }
     patched = patched.replace(
       THREAD_SETTINGS_UPDATE_REGEX,
-      `async updateThreadSettingsForNextTurn(${match[1]},${match[2]}){${match[2]}=codexLinuxCustomModelApplyThreadSettings(${match[2]});let ${match[3]}=this.pendingThreadSettingsUpdates.get(${match[1]}),`,
+      `async updateThreadSettingsForNextTurn(${match[1]},${match[2]}){${match[2]}=globalThis.__codexLinuxCustomModelApplyThreadSettingsFn?.(${match[2]})??${match[2]};let ${match[3]}=this.pendingThreadSettingsUpdates.get(${match[1]}),`,
     );
   }
 
@@ -588,7 +594,7 @@ function applyCustomModelThreadSettingsRoutingPatch(source) {
   );
   const stateUpdater = stateUpdaterMatch?.[1] ?? "zp";
   const providerResume =
-    `if(codexLinuxCustomModelNeedsProviderResume(this.getConversation(${threadId}),${settings})){` +
+    `if(globalThis.__codexLinuxCustomModelNeedsProviderResumeFn?.(this.getConversation(${threadId}),${settings})){` +
     `let codexLinuxTargetModel=${settings}?.model??${settings}?.collaborationMode?.settings?.model??null;` +
     `await this.sendRequest(\`thread/unsubscribe\`,{threadId:${threadId}}),this.streamState.removeConversation(${threadId}),` +
     `this.updateConversationState(${threadId},e=>{${stateUpdater}(e,${settings}),e.resumeState=\`needs_resume\`},!1);` +
@@ -603,6 +609,24 @@ function applyCustomModelThreadSettingsRoutingPatch(source) {
 }
 
 function applyCustomModelTurnStartRoutingPatch(source) {
+  if (source.includes("globalThis.__codexLinuxCustomModelApplyRoutingFn?.({threadId:")) {
+    return source;
+  }
+  if (source.includes("codexLinuxCustomModelApplyRouting({threadId:")) {
+    return source
+      .replaceAll(
+        "codexLinuxCustomModelApplyRouting({threadId:",
+        "globalThis.__codexLinuxCustomModelApplyRoutingFn?.({threadId:",
+      )
+      .replaceAll(
+        "},C),j={threadId:",
+        "},globalThis.__codexLinuxCustomModelRouteModelFn?.(C,y?.settings?.model)??C)??ge,j={threadId:",
+      )
+      .replaceAll(
+        "},C??y?.settings?.model),j={threadId:",
+        "},globalThis.__codexLinuxCustomModelRouteModelFn?.(C,y?.settings?.model)??C)??ge,j={threadId:",
+      );
+  }
   if (TURN_START_ROUTING_PATCHED_REGEX.test(source)) {
     return source;
   }
@@ -612,7 +636,7 @@ function applyCustomModelTurnStartRoutingPatch(source) {
       (needle, _payloadVar, modelVar, collaborationModeVar, requestParamsVar) =>
         needle.replace(
           `},${modelVar}??${collaborationModeVar}?.settings?.model),${requestParamsVar}={threadId:`,
-          `},codexLinuxCustomModelRouteModel(${modelVar},${collaborationModeVar}?.settings?.model)),${requestParamsVar}={threadId:`,
+          `},globalThis.__codexLinuxCustomModelRouteModelFn?.(${modelVar},${collaborationModeVar}?.settings?.model)??${modelVar}),${requestParamsVar}={threadId:`,
         ),
     );
   }
@@ -622,7 +646,7 @@ function applyCustomModelTurnStartRoutingPatch(source) {
       (needle, _payloadVar, modelVar, collaborationModeVar, requestParamsVar) =>
         needle.replace(
           `},${modelVar}),${requestParamsVar}={threadId:`,
-          `},codexLinuxCustomModelRouteModel(${modelVar},${collaborationModeVar}?.settings?.model)),${requestParamsVar}={threadId:`,
+          `},globalThis.__codexLinuxCustomModelRouteModelFn?.(${modelVar},${collaborationModeVar}?.settings?.model)??${modelVar}),${requestParamsVar}={threadId:`,
         ),
     );
   }
@@ -641,22 +665,28 @@ function applyCustomModelTurnStartRoutingPatch(source) {
     TURN_START_ROUTING_REGEX,
     (needle, payloadVar, modelVar, collaborationModeVar, requestParamsVar) =>
       needle
-        .replace(`${payloadVar}={threadId:`, `${payloadVar}=codexLinuxCustomModelApplyRouting({threadId:`)
+        .replace(`${payloadVar}={threadId:`, `${payloadVar}=globalThis.__codexLinuxCustomModelApplyRoutingFn?.({threadId:`)
         .replace(
           `},${requestParamsVar}={threadId:`,
-          `},codexLinuxCustomModelRouteModel(${modelVar},${collaborationModeVar}?.settings?.model)),${requestParamsVar}={threadId:`,
+          `},globalThis.__codexLinuxCustomModelRouteModelFn?.(${modelVar},${collaborationModeVar}?.settings?.model)??${modelVar})??${payloadVar},${requestParamsVar}={threadId:`,
         ),
   );
 }
 
 function applyCustomModelResumeDynamicToolsPatch(source) {
-  if (source.includes("skipDynamicTools:!codexLinuxCustomModelSupportsTools")) {
+  if (source.includes("skipDynamicTools:!globalThis.__codexLinuxCustomModelSupportsToolsFn?.(")) {
     return source;
+  }
+  if (source.includes("skipDynamicTools:!codexLinuxCustomModelSupportsTools")) {
+    return source.replaceAll(
+      "skipDynamicTools:!codexLinuxCustomModelSupportsTools(",
+      "skipDynamicTools:!globalThis.__codexLinuxCustomModelSupportsToolsFn?.(",
+    );
   }
   if (source.includes("skipDynamicTools:!codexLinuxCustomModelCustomSlug")) {
     return source.replaceAll(
       "skipDynamicTools:!codexLinuxCustomModelCustomSlug(",
-      "skipDynamicTools:!codexLinuxCustomModelSupportsTools(",
+      "skipDynamicTools:!globalThis.__codexLinuxCustomModelSupportsToolsFn?.(",
     );
   }
   if (!RESUME_SKIP_DYNAMIC_TOOLS_REGEX.test(source)) {

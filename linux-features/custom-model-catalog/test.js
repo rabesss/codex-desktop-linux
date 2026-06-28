@@ -1696,12 +1696,13 @@ test("start conversation routing patch preserves custom provider during Electron
 
   assert.match(
     patched,
-    /config:codexLinuxCustomModelApplyRouting\(\{config:m\?\?\{\}\},t\?\.settings\?\.model\)\.config,projectAssignment:g/,
+    /config:globalThis\.__codexLinuxCustomModelApplyRoutingFn\?\.\(\{config:m\?\?\{\}\},t\?\.settings\?\.model\)\?\.config\?\?m\?\?\{\},projectAssignment:g/,
   );
   assert.match(
     patched,
-    /skipAutoTitleGeneration:f=codexLinuxCustomModelCustomSlug\(t\?\.settings\?\.model\)/,
+    /skipAutoTitleGeneration:f=globalThis\.__codexLinuxCustomModelCustomSlugFn\?\.\(t\?\.settings\?\.model\)===!0/,
   );
+  assert.doesNotMatch(patched, /skipAutoTitleGeneration:[^,}]*=codexLinuxCustomModelCustomSlug/);
 });
 
 test("start conversation routing patch disables official auto-title calls for custom models", () => {
@@ -1715,8 +1716,9 @@ test("start conversation routing patch disables official auto-title calls for cu
 
   assert.match(
     patched,
-    /skipAutoTitleGeneration:d=codexLinuxCustomModelCustomSlug\(t\?\.settings\?\.model\)/,
+    /skipAutoTitleGeneration:d=globalThis\.__codexLinuxCustomModelCustomSlugFn\?\.\(t\?\.settings\?\.model\)===!0/,
   );
+  assert.doesNotMatch(patched, /skipAutoTitleGeneration:[^,}]*=codexLinuxCustomModelCustomSlug/);
 });
 
 test("fork conversation routing preserves custom model provider overrides", () => {
@@ -1875,10 +1877,10 @@ test("thread settings routing patch augments existing-thread settings updates", 
   ].join("");
   const patched = applyPatchTwice(applyCustomModelThreadSettingsRoutingPatch, source);
 
-  assert.match(patched, /t=codexLinuxCustomModelApplyThreadSettings\(t\);let n=this\.pendingThreadSettingsUpdates/);
+  assert.match(patched, /t=globalThis\.__codexLinuxCustomModelApplyThreadSettingsFn\?\.\(t\)\?\?t;let n=this\.pendingThreadSettingsUpdates/);
   assert.match(
     patched,
-    /codexLinuxCustomModelNeedsProviderResume\(this\.getConversation\(e\),t\)/,
+    /globalThis\.__codexLinuxCustomModelNeedsProviderResumeFn\?\.\(this\.getConversation\(e\),t\)/,
   );
   assert.match(patched, /sendRequest\(`thread\/unsubscribe`,\{threadId:e\}\)/);
   assert.match(patched, /this\.streamState\.removeConversation\(e\)/);
@@ -1895,8 +1897,8 @@ test("turn start routing patch recovers stale custom threads without provider se
   ].join("");
   const patched = applyPatchTwice(applyCustomModelTurnStartRoutingPatch, source);
 
-  assert.match(patched, /ge=codexLinuxCustomModelApplyRouting\(\{threadId:t/);
-  assert.match(patched, /\},codexLinuxCustomModelRouteModel\(C,y\?\.settings\?\.model\)\),j=\{threadId:t/);
+  assert.match(patched, /ge=globalThis\.__codexLinuxCustomModelApplyRoutingFn\?\.\(\{threadId:t/);
+  assert.match(patched, /\},globalThis\.__codexLinuxCustomModelRouteModelFn\?\.\(C,y\?\.settings\?\.model\)\?\?C\)\?\?ge,j=\{threadId:t/);
   assert.match(patched, /sendRequest\(`turn\/start`,ge/);
 });
 
@@ -1909,7 +1911,7 @@ test("turn start routing patch rewrites legacy top-level-only routing hook", () 
   ].join("");
   const patched = applyPatchTwice(applyCustomModelTurnStartRoutingPatch, source);
 
-  assert.match(patched, /\},codexLinuxCustomModelRouteModel\(C,y\?\.settings\?\.model\)\),j=\{threadId:t/);
+  assert.match(patched, /\},globalThis\.__codexLinuxCustomModelRouteModelFn\?\.\(C,y\?\.settings\?\.model\)\?\?C\)\?\?ge,j=\{threadId:t/);
   assert.doesNotMatch(patched, /\},C\),j=\{threadId:t/);
 });
 
@@ -1922,7 +1924,7 @@ test("turn start routing patch upgrades unsafe collaboration-mode fallback routi
   ].join("");
   const patched = applyPatchTwice(applyCustomModelTurnStartRoutingPatch, source);
 
-  assert.match(patched, /\},codexLinuxCustomModelRouteModel\(C,y\?\.settings\?\.model\)\),j=\{threadId:t/);
+  assert.match(patched, /\},globalThis\.__codexLinuxCustomModelRouteModelFn\?\.\(C,y\?\.settings\?\.model\)\?\?C\)\?\?ge,j=\{threadId:t/);
   assert.doesNotMatch(patched, /\},C\?\?y\?\.settings\?\.model\),j=\{threadId:t/);
 });
 
@@ -1963,7 +1965,7 @@ test("resume dynamic-tools patch re-fetches tools only for tool-capable catalog 
   ].join("");
   const patched = applyPatchTwice(applyCustomModelResumeDynamicToolsPatch, source);
 
-  assert.match(patched, /skipDynamicTools:!codexLinuxCustomModelSupportsTools\(ee\)/);
+  assert.match(patched, /skipDynamicTools:!globalThis\.__codexLinuxCustomModelSupportsToolsFn\?\.\(ee\)/);
   assert.doesNotMatch(patched, /skipDynamicTools:!codexLinuxCustomModelCustomSlug/);
 });
 
@@ -1974,7 +1976,7 @@ test("resume dynamic-tools patch upgrades old custom-slug gating", () => {
   ].join("");
   const patched = applyPatchTwice(applyCustomModelResumeDynamicToolsPatch, source);
 
-  assert.match(patched, /skipDynamicTools:!codexLinuxCustomModelSupportsTools\(ee\)/);
+  assert.match(patched, /skipDynamicTools:!globalThis\.__codexLinuxCustomModelSupportsToolsFn\?\.\(ee\)/);
   assert.doesNotMatch(patched, /skipDynamicTools:!codexLinuxCustomModelCustomSlug/);
 });
 
@@ -1991,7 +1993,7 @@ test("resume dynamic-tools payload patch forwards dynamicTools on thread/resume"
   assert.match(patched, /dynamicTools:A\.dynamicTools/);
   assert.match(
     patched,
-    /codexLinuxCustomModelSupportsTools\(A\.model\?\?A\.collaborationMode\?\.settings\?\.model\)/,
+    /globalThis\.__codexLinuxCustomModelSupportsToolsFn\?\.\(A\.model\?\?A\.collaborationMode\?\.settings\?\.model\)/,
   );
 });
 
@@ -2424,7 +2426,7 @@ test("asset descriptor validation patches current bundles", () => {
       );
       assert.match(
         fs.readFileSync(path.join(assetsDir, "thread-context-inputs-test.js"), "utf8"),
-        /codexLinuxCustomModelApplyRouting\(\{threadId:t[\s\S]*\},codexLinuxCustomModelRouteModel\(C,y\?\.settings\?\.model\)\),j=\{threadId:t/,
+        /globalThis\.__codexLinuxCustomModelApplyRoutingFn\?\.\(\{threadId:t[\s\S]*\},globalThis\.__codexLinuxCustomModelRouteModelFn\?\.\(C,y\?\.settings\?\.model\)\?\?C\)\?\?ge,j=\{threadId:t/,
       );
       assert.match(
         fs.readFileSync(path.join(assetsDir, "thread-context-inputs-test.js"), "utf8"),
