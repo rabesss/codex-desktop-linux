@@ -27,7 +27,7 @@ async fn main() -> Result<()> {
     match std::env::args().nth(1).as_deref() {
         Some("mcp") => server::serve_mcp().await,
         Some("doctor") => {
-            let report = diagnostics::doctor_report();
+            let report = diagnostics::doctor_report().await;
             println!(
                 "{}",
                 serde_json::to_string_pretty(&report)
@@ -36,7 +36,7 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Some("setup") => {
-            let report = diagnostics::setup_accessibility_report();
+            let report = diagnostics::setup_accessibility_report().await;
             println!(
                 "{}",
                 serde_json::to_string_pretty(&report)
@@ -102,6 +102,9 @@ async fn main() -> Result<()> {
                     "bytes": capture.bytes,
                     "original_bytes": capture.original_bytes,
                     "format": capture.format,
+                    "screenshot_backend": capture.screenshot_backend,
+                    "visual_confidence": capture.visual_confidence,
+                    "failure_chain": capture.failure_chain,
                     "data_url_length": capture.data_url.len()
                 }))
                 .context("failed to serialize screenshot report")?

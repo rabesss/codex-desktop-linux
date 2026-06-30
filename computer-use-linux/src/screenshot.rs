@@ -9,7 +9,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
-    fs,
+    fmt, fs,
     io::Cursor,
     path::{Path, PathBuf},
     process::{Command as StdCommand, Stdio},
@@ -39,8 +39,11 @@ pub struct RawScreenshotCapture {
     pub mime_type: String,
     pub bytes: Vec<u8>,
     pub source: String,
+    pub backend: String,
     pub width: u32,
     pub height: u32,
+    pub visual_confidence: VisualConfidence,
+    pub failure_chain: Vec<ScreenshotAttempt>,
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
@@ -59,6 +62,10 @@ pub struct ScreenshotCapture {
     pub max_bytes: usize,
     pub format: ScreenshotOutputFormat,
     pub quality: Option<u8>,
+    pub screenshot_backend: String,
+    pub visual_confidence: VisualConfidence,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub failure_chain: Vec<ScreenshotAttempt>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub origin_x: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -72,7 +79,29 @@ pub struct ScreenshotCapture {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target_backend_window_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_monitor: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub focus_verified: Option<bool>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum VisualConfidence {
+    Full,
+    Degraded,
+    Unavailable,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct ScreenshotAttempt {
+    pub backend: String,
+    pub ok: bool,
+    pub detail: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ScreenshotFailure {
+    pub attempts: Vec<ScreenshotAttempt>,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -158,6 +187,7 @@ const SCREENSHOT_BACKEND_ENV: &str = "COMPUTER_USE_LINUX_SCREENSHOT_BACKEND";
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ScreenshotBackend {
     GnomeShell,
+    HyprlandGrim,
     Portal,
     GnomeScreenshot,
 }
@@ -166,15 +196,26 @@ impl ScreenshotBackend {
     fn parse(value: &str) -> Option<Self> {
         match value.trim().to_ascii_lowercase().as_str() {
             "gnome-shell" | "gnome_shell" | "shell" => Some(Self::GnomeShell),
+            "grim" | "hyprland-grim" | "hyprland_grim" => Some(Self::HyprlandGrim),
             "portal" | "xdg-portal" | "xdg_portal" => Some(Self::Portal),
             "gnome-screenshot" | "gnome_screenshot" => Some(Self::GnomeScreenshot),
             _ => None,
         }
     }
 
+    fn id(self) -> &'static str {
+        match self {
+            Self::GnomeShell => "gnome-shell",
+            Self::HyprlandGrim => "hyprland-grim",
+            Self::Portal => "xdg-desktop-portal",
+            Self::GnomeScreenshot => "gnome-screenshot",
+        }
+    }
+
     async fn capture(self) -> Result<RawScreenshotCapture> {
         match self {
             Self::GnomeShell => capture_with_gnome_shell().await,
+            Self::HyprlandGrim => capture_with_hyprland_grim_raw().await,
             Self::Portal => capture_with_portal().await,
             Self::GnomeScreenshot => capture_with_gnome_screenshot().await,
         }
@@ -182,30 +223,90 @@ impl ScreenshotBackend {
 }
 
 pub async fn capture_screenshot_raw() -> Result<RawScreenshotCapture> {
+    capture_screenshot_raw_traced()
+        .await
+        .map_err(|failure| anyhow!(failure.to_string()))
+}
+
+pub async fn capture_screenshot_raw_traced(
+) -> std::result::Result<RawScreenshotCapture, ScreenshotFailure> {
     hydrate_session_bus_env();
 
-    if let Some(forced) = forced_backend()? {
-        return forced.capture().await;
+    let backends = match forced_backend() {
+        Ok(Some(forced)) => vec![forced],
+        Ok(None) => default_screenshot_backends(),
+        Err(error) => {
+            return Err(ScreenshotFailure {
+                attempts: vec![ScreenshotAttempt {
+                    backend: "forced-backend".to_string(),
+                    ok: false,
+                    detail: error.to_string(),
+                }],
+            });
+        }
+    };
+
+    let mut attempts = Vec::new();
+    for backend in backends {
+        match backend.capture().await {
+            Ok(mut capture) => {
+                capture.source = backend.id().to_string();
+                capture.backend = backend.id().to_string();
+                capture.visual_confidence = VisualConfidence::Full;
+                capture.failure_chain = attempts;
+                return Ok(capture);
+            }
+            Err(error) => attempts.push(ScreenshotAttempt {
+                backend: backend.id().to_string(),
+                ok: false,
+                detail: format!("{error:#}"),
+            }),
+        }
     }
 
-    let gnome_error = match capture_with_gnome_shell().await {
-        Ok(capture) => return Ok(capture),
-        Err(error) => error,
-    };
-    let portal_error = match capture_with_portal().await {
-        Ok(capture) => return Ok(capture),
-        Err(error) => error,
-    };
-    let cli_error = match capture_with_gnome_screenshot().await {
-        Ok(capture) => return Ok(capture),
-        Err(error) => error,
-    };
+    Err(ScreenshotFailure { attempts })
+}
 
-    Err(anyhow!(
-        "GNOME Shell screenshot failed: {gnome_error}; \
-         XDG portal screenshot failed: {portal_error}; \
-         gnome-screenshot fallback failed: {cli_error}"
-    ))
+fn default_screenshot_backends() -> Vec<ScreenshotBackend> {
+    let mut backends = Vec::new();
+    if is_hyprland_session() {
+        backends.push(ScreenshotBackend::HyprlandGrim);
+    }
+    backends.push(ScreenshotBackend::GnomeShell);
+    backends.push(ScreenshotBackend::Portal);
+    backends.push(ScreenshotBackend::GnomeScreenshot);
+    backends
+}
+
+fn is_hyprland_session() -> bool {
+    [
+        "XDG_CURRENT_DESKTOP",
+        "XDG_SESSION_DESKTOP",
+        "DESKTOP_SESSION",
+    ]
+    .iter()
+    .filter_map(|key| std::env::var(key).ok())
+    .any(|value| value.to_ascii_lowercase().contains("hyprland"))
+        || std::env::var("HYPRLAND_INSTANCE_SIGNATURE")
+            .ok()
+            .is_some_and(|value| !value.trim().is_empty())
+}
+
+impl fmt::Display for ScreenshotFailure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.attempts.is_empty() {
+            return write!(f, "screenshot capture failed without any backend attempts");
+        }
+        write!(
+            f,
+            "{}",
+            self.attempts
+                .iter()
+                .map(|attempt| format!("{} failed: {}", attempt.backend, attempt.detail))
+                .collect::<Vec<_>>()
+                .join("; ")
+        )
+    }
 }
 
 fn forced_backend() -> Result<Option<ScreenshotBackend>> {
@@ -214,7 +315,7 @@ fn forced_backend() -> Result<Option<ScreenshotBackend>> {
             ScreenshotBackend::parse(&value).map(Some).ok_or_else(|| {
                 anyhow!(
                     "{SCREENSHOT_BACKEND_ENV}={value:?} is not a recognized backend \
-                     (expected gnome-shell, portal, or gnome-screenshot)"
+                     (expected gnome-shell, hyprland-grim, portal, or gnome-screenshot)"
                 )
             })
         }
@@ -227,29 +328,55 @@ pub async fn capture_screenshot() -> Result<ScreenshotCapture> {
     prepare_screenshot_payload(raw, ScreenshotPayloadOptions::default())
 }
 
+pub async fn capture_with_hyprland_grim_raw() -> Result<RawScreenshotCapture> {
+    capture_with_grim_geometry(None, "hyprland-grim").await
+}
+
 pub async fn capture_region_with_grim_raw(bounds: &WindowBounds) -> Result<RawScreenshotCapture> {
+    capture_region_with_grim_raw_named(bounds, "hyprland-grim-window").await
+}
+
+pub async fn capture_region_with_grim_raw_named(
+    bounds: &WindowBounds,
+    source: &str,
+) -> Result<RawScreenshotCapture> {
     let (x, y, width, height) = window_region(bounds)?;
     let geometry = grim_geometry(x, y, width, height);
+    capture_with_grim_geometry(Some(geometry), source).await
+}
+
+async fn capture_with_grim_geometry(
+    geometry: Option<String>,
+    source: &str,
+) -> Result<RawScreenshotCapture> {
     let path = temp_png_path("hyprland-grim-window");
-    let output = StdCommand::new("grim")
-        .args(["-g", geometry.as_str()])
+    let mut command = StdCommand::new("grim");
+    if let Some(geometry) = geometry.as_deref() {
+        command.args(["-g", geometry]);
+    }
+    let output = command
         .arg(&path)
         .output()
-        .with_context(|| format!("failed to run grim -g {geometry}"))?;
+        .with_context(|| match geometry.as_deref() {
+            Some(geometry) => format!("failed to run grim -g {geometry}"),
+            None => "failed to run grim".to_string(),
+        })?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
         let detail = if stderr.is_empty() { stdout } else { stderr };
         let _ = fs::remove_file(&path);
-        bail!("grim -g {geometry} failed: {detail}");
+        let command = geometry
+            .as_deref()
+            .map(|geometry| format!("grim -g {geometry}"))
+            .unwrap_or_else(|| "grim".to_string());
+        bail!("{command} failed: {detail}");
     }
 
-    read_png_as_capture(
-        path.clone(),
-        "hyprland-grim-window",
-        ScreenshotCleanup::DeletePath(path),
-    )
-    .await
+    let mut capture =
+        read_png_as_capture(path.clone(), source, ScreenshotCleanup::DeletePath(path)).await?;
+    capture.backend = "hyprland-grim".to_string();
+    Ok(capture)
 }
 
 pub fn prepare_screenshot_payload(
@@ -270,6 +397,10 @@ pub fn prepare_screenshot_payload(
     let options = options.resolve();
     let (target_width, target_height) =
         target_dimensions(coordinate_width, coordinate_height, options);
+
+    let screenshot_backend = raw.backend.clone();
+    let visual_confidence = raw.visual_confidence;
+    let failure_chain = raw.failure_chain.clone();
 
     let (bytes, width, height) = if options.format == ScreenshotOutputFormat::Png
         && target_width == coordinate_width
@@ -310,12 +441,16 @@ pub fn prepare_screenshot_payload(
         max_bytes: options.max_bytes,
         format: options.format,
         quality: (options.format == ScreenshotOutputFormat::Jpeg).then_some(options.quality),
+        screenshot_backend,
+        visual_confidence,
+        failure_chain,
         origin_x: None,
         origin_y: None,
         coordinate_space: None,
         cropped_to_window: None,
         target_window_id: None,
         target_backend_window_id: None,
+        target_monitor: None,
         focus_verified: None,
     })
 }
@@ -520,8 +655,11 @@ fn read_png_as_capture_inner(path: &Path, source: &str) -> Result<RawScreenshotC
         mime_type: "image/png".to_string(),
         bytes,
         source: source.to_string(),
+        backend: source.to_string(),
         width,
         height,
+        visual_confidence: VisualConfidence::Full,
+        failure_chain: Vec::new(),
     })
 }
 
@@ -761,8 +899,11 @@ mod tests {
             mime_type: "image/png".to_string(),
             bytes,
             source: "test".to_string(),
+            backend: "test".to_string(),
             width,
             height,
+            visual_confidence: VisualConfidence::Full,
+            failure_chain: Vec::new(),
         }
     }
 
@@ -786,6 +927,10 @@ mod tests {
         assert_eq!(
             ScreenshotBackend::parse("gnome-shell"),
             Some(ScreenshotBackend::GnomeShell)
+        );
+        assert_eq!(
+            ScreenshotBackend::parse("hyprland_grim"),
+            Some(ScreenshotBackend::HyprlandGrim)
         );
         assert_eq!(
             ScreenshotBackend::parse("  Portal "),
@@ -815,6 +960,9 @@ mod tests {
         assert!(!capture.resized);
         assert!(capture.data_url.starts_with("data:image/png;base64,"));
         assert_eq!(capture.bytes, capture.original_bytes);
+        assert_eq!(capture.screenshot_backend, "test");
+        assert_eq!(capture.visual_confidence, VisualConfidence::Full);
+        assert!(capture.failure_chain.is_empty());
     }
 
     #[test]

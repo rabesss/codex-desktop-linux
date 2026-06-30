@@ -1,3 +1,5 @@
+use crate::screenshot::{capture_screenshot_raw_traced, ScreenshotAttempt, VisualConfidence};
+use crate::windowing::backends::hyprland::HyprlandTopologySnapshot;
 use crate::windowing::registry::{
     self, COSMIC_WAYLAND_BACKEND, GNOME_SHELL_EXTENSION_BACKEND, GNOME_SHELL_INTROSPECT_BACKEND,
     HYPRLAND_BACKEND, I3_BACKEND, KWIN_BACKEND, SWAY_BACKEND,
@@ -41,6 +43,7 @@ pub struct DoctorReport {
     pub accessibility: AccessibilityReport,
     pub windowing: WindowingReport,
     pub input: InputReport,
+    pub screenshot: ScreenshotHealthReport,
     pub readiness: ReadinessReport,
     /// Which interchangeable backends this environment supports, per layer, plus
     /// the one the tool prefers. Lets an agent (or selector) understand what's
@@ -120,6 +123,17 @@ pub struct PortalReport {
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct ScreenshotHealthReport {
+    pub declared_backends: Vec<String>,
+    pub smoke_test: Check,
+    pub backend_used: Option<String>,
+    pub active_portal: Option<String>,
+    pub visual_confidence: VisualConfidence,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub failure_chain: Vec<ScreenshotAttempt>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct AccessibilityReport {
     pub at_spi_bus: Check,
     pub toolkit_accessibility: Check,
@@ -140,6 +154,8 @@ pub struct WindowingReport {
     pub can_list_windows: bool,
     pub can_focus_apps: bool,
     pub can_focus_windows: bool,
+    pub topology: Option<HyprlandTopologySnapshot>,
+    pub topology_error: Option<String>,
     pub note: String,
 }
 
@@ -159,6 +175,9 @@ pub struct ReadinessReport {
     pub can_focus_apps: bool,
     pub can_focus_windows: bool,
     pub can_send_development_input: bool,
+    pub can_capture_screenshot: bool,
+    pub degraded: bool,
+    pub visual_confidence: VisualConfidence,
     pub recommended_next_step: String,
     pub blockers: Vec<String>,
 }
@@ -195,7 +214,7 @@ impl Check {
     }
 }
 
-pub fn doctor_report() -> DoctorReport {
+pub async fn doctor_report() -> DoctorReport {
     let env_hydration = hydrate_session_bus_env_with_report();
 
     let platform = platform_report();
@@ -203,9 +222,24 @@ pub fn doctor_report() -> DoctorReport {
     let accessibility = accessibility_report();
     let windowing = windowing_report(&platform);
     let input = input_report();
-    let readiness = readiness_report(&platform, &portals, &accessibility, &windowing, &input);
+    let screenshot = screenshot_health_report(&platform, &portals, &windowing).await;
+    let readiness = readiness_report(
+        &platform,
+        &portals,
+        &accessibility,
+        &windowing,
+        &input,
+        &screenshot,
+    );
 
-    let capabilities = capability_map(&platform, &portals, &accessibility, &windowing, &input);
+    let capabilities = capability_map(
+        &platform,
+        &portals,
+        &accessibility,
+        &windowing,
+        &input,
+        &screenshot,
+    );
 
     DoctorReport {
         platform,
@@ -214,6 +248,7 @@ pub fn doctor_report() -> DoctorReport {
         accessibility,
         windowing,
         input,
+        screenshot,
         readiness,
         capabilities,
     }
@@ -227,6 +262,7 @@ fn capability_map(
     accessibility: &AccessibilityReport,
     windowing: &WindowingReport,
     input: &InputReport,
+    screenshot: &ScreenshotHealthReport,
 ) -> CapabilityMap {
     let mut input_backends = Vec::new();
     // Absolute uinput pointer: accurate, non-blocking of coordinates; preferred.
@@ -241,14 +277,20 @@ fn capability_map(
     }
 
     let mut screenshot_backends = Vec::new();
+    if let Some(backend) = &screenshot.backend_used {
+        push_unique_string(&mut screenshot_backends, backend);
+    }
+    for backend in &screenshot.declared_backends {
+        push_unique_string(&mut screenshot_backends, backend);
+    }
     if platform.gnome_shell_version.ok {
-        screenshot_backends.push("gnome_shell".to_string());
+        push_unique_string(&mut screenshot_backends, "gnome-shell");
     }
     if portals.screenshot.ok {
-        screenshot_backends.push("portal".to_string());
+        push_unique_string(&mut screenshot_backends, "xdg-desktop-portal");
     }
     if platform.gnome_screenshot.ok {
-        screenshot_backends.push("gnome_screenshot".to_string());
+        push_unique_string(&mut screenshot_backends, "gnome-screenshot");
     }
 
     let mut window_backends = Vec::new();
@@ -286,7 +328,10 @@ fn capability_map(
 
     let preferred = PreferredBackends {
         input: input_backends.first().cloned(),
-        screenshot: screenshot_backends.first().cloned(),
+        screenshot: screenshot
+            .backend_used
+            .clone()
+            .or_else(|| screenshot_backends.first().cloned()),
         window_control: window_backends.first().cloned(),
     };
 
@@ -297,6 +342,12 @@ fn capability_map(
         accessibility: accessibility_backends,
         isolation,
         preferred,
+    }
+}
+
+fn push_unique_string(values: &mut Vec<String>, value: &str) {
+    if !values.iter().any(|item| item == value) {
+        values.push(value.to_string());
     }
 }
 
@@ -683,10 +734,10 @@ fn parse_line_environment(bytes: &[u8]) -> HashMap<String, String> {
         .collect()
 }
 
-pub fn setup_accessibility_report() -> SetupReport {
+pub async fn setup_accessibility_report() -> SetupReport {
     hydrate_session_bus_env();
 
-    let before = doctor_report();
+    let before = doctor_report().await;
     let accessibility_command = if can_build_accessibility_tree(&before.accessibility) {
         Check::ok("AT-SPI accessibility is already enabled")
     } else {
@@ -717,7 +768,7 @@ pub fn setup_accessibility_report() -> SetupReport {
             )
         }
     };
-    let after = doctor_report();
+    let after = doctor_report().await;
     let before_ready = before.readiness.can_build_accessibility_tree;
     let after_ready = after.readiness.can_build_accessibility_tree;
     let changed_accessibility = !before_ready && after_ready;
@@ -772,6 +823,88 @@ fn portal_report() -> PortalReport {
     }
 }
 
+async fn screenshot_health_report(
+    platform: &PlatformReport,
+    portals: &PortalReport,
+    windowing: &WindowingReport,
+) -> ScreenshotHealthReport {
+    let mut declared_backends = declared_screenshot_backends(platform, portals, windowing);
+    let active_portal = active_portal_implementation();
+
+    match capture_screenshot_raw_traced().await {
+        Ok(capture) => {
+            push_unique_string(&mut declared_backends, &capture.backend);
+            ScreenshotHealthReport {
+                declared_backends,
+                smoke_test: Check::ok(format!(
+                    "captured {}x{} through {}",
+                    capture.width, capture.height, capture.backend
+                )),
+                backend_used: Some(capture.backend),
+                active_portal,
+                visual_confidence: capture.visual_confidence,
+                failure_chain: capture.failure_chain,
+            }
+        }
+        Err(failure) => ScreenshotHealthReport {
+            declared_backends,
+            smoke_test: Check::fail(failure.to_string()),
+            backend_used: None,
+            active_portal,
+            visual_confidence: VisualConfidence::Unavailable,
+            failure_chain: failure.attempts,
+        },
+    }
+}
+
+fn declared_screenshot_backends(
+    platform: &PlatformReport,
+    portals: &PortalReport,
+    windowing: &WindowingReport,
+) -> Vec<String> {
+    let mut backends = Vec::new();
+    if platform.gnome_shell_version.ok {
+        push_unique_string(&mut backends, "gnome-shell");
+    }
+    if windowing.hyprland.ok && command_path_check("grim").ok {
+        push_unique_string(&mut backends, "hyprland-grim");
+    }
+    if portals.screenshot.ok {
+        push_unique_string(&mut backends, "xdg-desktop-portal");
+    }
+    if platform.gnome_screenshot.ok {
+        push_unique_string(&mut backends, "gnome-screenshot");
+    }
+    backends
+}
+
+fn active_portal_implementation() -> Option<String> {
+    let mut cmd = Command::new("busctl");
+    cmd.args(["--user", "list"]);
+    if let Some(address) = dbus_session_address() {
+        cmd.env("DBUS_SESSION_BUS_ADDRESS", address);
+    }
+    if let Some(runtime) = xdg_runtime_dir() {
+        cmd.env("XDG_RUNTIME_DIR", runtime);
+    }
+
+    let output = cmd.output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    stdout.lines().find_map(|line| {
+        let mut columns = line.split_whitespace();
+        let name = columns.next()?;
+        let pid = columns.next()?;
+        if name.starts_with("org.freedesktop.impl.portal.desktop.") && pid != "-" {
+            Some(name.to_string())
+        } else {
+            None
+        }
+    })
+}
+
 fn accessibility_report() -> AccessibilityReport {
     AccessibilityReport {
         at_spi_bus: atspi_bus_address_check(),
@@ -811,6 +944,14 @@ fn windowing_report(platform: &PlatformReport) -> WindowingReport {
     let can_list_windows = probes.iter().any(|probe| probe.can_list_windows);
     let can_focus_apps = probes.iter().any(|probe| probe.can_focus_apps);
     let can_focus_windows = probes.iter().any(|probe| probe.can_focus_windows);
+    let (topology, topology_error) = if hyprland.ok {
+        match crate::windowing::backends::hyprland::topology_snapshot() {
+            Ok(snapshot) => (Some(snapshot), None),
+            Err(error) => (None, Some(format!("{error:#}"))),
+        }
+    } else {
+        (None, None)
+    };
     let note = if can_list_windows {
         if cosmic_helper.ok && is_cosmic_wayland_platform(platform) {
             "A COSMIC Wayland window backend is available for list_windows, focused_window, and targeted input verification."
@@ -842,6 +983,8 @@ fn windowing_report(platform: &PlatformReport) -> WindowingReport {
         can_list_windows,
         can_focus_apps,
         can_focus_windows,
+        topology,
+        topology_error,
         note,
     }
 }
@@ -869,6 +1012,7 @@ fn readiness_report(
     accessibility: &AccessibilityReport,
     windowing: &WindowingReport,
     input: &InputReport,
+    screenshot: &ScreenshotHealthReport,
 ) -> ReadinessReport {
     let mut blockers = Vec::new();
     let can_build_accessibility_tree = can_build_accessibility_tree(accessibility);
@@ -876,6 +1020,9 @@ fn readiness_report(
     let can_focus_apps = windowing.can_focus_apps;
     let can_focus_windows = windowing.can_focus_windows;
     let can_send_development_input = can_send_development_input(portals, input);
+    let can_capture_screenshot = screenshot.smoke_test.ok;
+    let visual_confidence = screenshot.visual_confidence;
+    let degraded = !can_capture_screenshot || visual_confidence != VisualConfidence::Full;
 
     if !can_build_accessibility_tree {
         blockers.push(
@@ -924,6 +1071,9 @@ fn readiness_report(
     } else if !can_send_development_input {
         "Enable a supported input backend: grant read/write /dev/uinput, enable the XDG RemoteDesktop portal, or start ydotoold with a socket accessible to this desktop user."
             .to_string()
+    } else if !can_capture_screenshot {
+        "Computer Use is degraded: AT-SPI tree support, window targeting, and input are available, but screenshot capture failed. Use text/window metadata conservatively until a screenshot backend is fixed."
+            .to_string()
     } else {
         "Computer Use is ready: AT-SPI tree support, window targeting, and a Linux input backend are available."
             .to_string()
@@ -936,6 +1086,9 @@ fn readiness_report(
         can_focus_apps,
         can_focus_windows,
         can_send_development_input,
+        can_capture_screenshot,
+        degraded,
+        visual_confidence,
         recommended_next_step,
         blockers,
     }
@@ -1264,6 +1417,8 @@ mod tests {
             can_list_windows,
             can_focus_apps: true,
             can_focus_windows,
+            topology: None,
+            topology_error: None,
             note: String::new(),
         }
     }
@@ -1288,6 +1443,25 @@ mod tests {
             ydotoold,
             ydotool_socket,
             uinput,
+        }
+    }
+
+    fn screenshot_report(ok: bool) -> ScreenshotHealthReport {
+        ScreenshotHealthReport {
+            declared_backends: vec!["test-screenshot".to_string()],
+            smoke_test: if ok {
+                Check::ok("captured through test-screenshot")
+            } else {
+                Check::fail("test screenshot failed")
+            },
+            backend_used: ok.then(|| "test-screenshot".to_string()),
+            active_portal: None,
+            visual_confidence: if ok {
+                VisualConfidence::Full
+            } else {
+                VisualConfidence::Unavailable
+            },
+            failure_chain: Vec::new(),
         }
     }
 
@@ -1614,6 +1788,7 @@ mod tests {
             &accessibility_report(Check::fail("missing"), Check::fail("false")),
             &windowing_report(false, false),
             &input_report(false),
+            &screenshot_report(false),
         );
 
         assert_eq!(capabilities.isolation, vec!["shared".to_string()]);
@@ -1636,6 +1811,7 @@ mod tests {
             &accessibility,
             &windowing,
             &input,
+            &screenshot_report(true),
         );
 
         assert!(readiness.can_query_windows);
@@ -1666,6 +1842,7 @@ mod tests {
             &accessibility,
             &windowing,
             &input,
+            &screenshot_report(true),
         );
 
         assert!(readiness.can_query_windows);
@@ -1687,6 +1864,7 @@ mod tests {
             &accessibility,
             &windowing,
             &input,
+            &screenshot_report(true),
         );
 
         assert!(readiness.blockers.is_empty());
@@ -1717,6 +1895,7 @@ mod tests {
             &accessibility,
             &windowing,
             &input,
+            &screenshot_report(true),
         );
 
         assert!(readiness.can_send_development_input);
@@ -1741,6 +1920,7 @@ mod tests {
             &accessibility,
             &windowing,
             &input,
+            &screenshot_report(true),
         );
 
         assert!(readiness.can_send_development_input);
@@ -1765,6 +1945,7 @@ mod tests {
             &accessibility,
             &windowing,
             &input,
+            &screenshot_report(true),
         );
 
         assert!(readiness.can_send_development_input);
@@ -1789,6 +1970,7 @@ mod tests {
             &accessibility,
             &windowing,
             &input,
+            &screenshot_report(true),
         );
 
         assert!(!readiness.can_send_development_input);
@@ -1883,11 +2065,37 @@ mod tests {
             &accessibility,
             &windowing,
             &input,
+            &screenshot_report(true),
         );
 
         assert!(readiness
             .blockers
             .iter()
             .any(|blocker| blocker.contains("COSMIC Wayland window introspection")));
+    }
+
+    #[test]
+    fn readiness_reports_degraded_visual_state_when_screenshot_smoke_fails() {
+        let platform = platform_report();
+        let accessibility = accessibility_report(Check::ok("bus"), Check::ok("true"));
+        let windowing = windowing_report(true, true);
+        let input = input_report(true);
+
+        let readiness = readiness_report(
+            &platform,
+            &portal_report(Check::fail("missing")),
+            &accessibility,
+            &windowing,
+            &input,
+            &screenshot_report(false),
+        );
+
+        assert!(!readiness.can_capture_screenshot);
+        assert!(readiness.degraded);
+        assert_eq!(readiness.visual_confidence, VisualConfidence::Unavailable);
+        assert!(readiness
+            .recommended_next_step
+            .contains("screenshot capture failed"));
+        assert!(readiness.blockers.is_empty());
     }
 }

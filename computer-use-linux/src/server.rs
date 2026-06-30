@@ -12,9 +12,9 @@ use crate::remote_desktop::{
     ScrollDirection,
 };
 use crate::screenshot::{
-    capture_region_with_grim_raw, capture_screenshot_raw, prepare_screenshot_payload,
-    window_region, RawScreenshotCapture, ScreenshotCapture, ScreenshotOutputFormat,
-    ScreenshotPayloadOptions,
+    capture_region_with_grim_raw, capture_region_with_grim_raw_named, capture_screenshot_raw,
+    prepare_screenshot_payload, window_region, RawScreenshotCapture, ScreenshotCapture,
+    ScreenshotOutputFormat, ScreenshotPayloadOptions, VisualConfidence,
 };
 use crate::windowing::registry;
 use crate::windows::{
@@ -77,8 +77,8 @@ impl ComputerUseLinux {
             open_world_hint = false
         )
     )]
-    fn doctor(&self) -> Json<DoctorReport> {
-        Json(doctor_report())
+    async fn doctor(&self) -> Json<DoctorReport> {
+        Json(doctor_report().await)
     }
 
     #[tool(
@@ -91,8 +91,8 @@ impl ComputerUseLinux {
             open_world_hint = false
         )
     )]
-    fn setup_accessibility(&self) -> Json<SetupReport> {
-        Json(setup_accessibility_report())
+    async fn setup_accessibility(&self) -> Json<SetupReport> {
+        Json(setup_accessibility_report().await)
     }
 
     #[tool(
@@ -242,7 +242,7 @@ impl ComputerUseLinux {
         &self,
         Parameters(params): Parameters<GetAppStateParams>,
     ) -> Json<GetAppStateOutput> {
-        let diagnostics = doctor_report();
+        let diagnostics = doctor_report().await;
         let (window_context, window_error, window_permissions_hint) =
             self.resolve_window_context(&params).await;
         let max_nodes = params.max_nodes.unwrap_or(120).clamp(1, 500);
@@ -318,6 +318,30 @@ impl ComputerUseLinux {
         } else if let Some(error) = &window_error {
             message.push_str(&format!(" Window target resolution failed: {error}"));
         }
+        let visual_confidence = screenshot
+            .as_ref()
+            .map(|capture| capture.visual_confidence)
+            .unwrap_or(VisualConfidence::Unavailable);
+        let screenshot_backend = screenshot
+            .as_ref()
+            .map(|capture| capture.screenshot_backend.clone());
+        let active_monitor = diagnostics
+            .windowing
+            .topology
+            .as_ref()
+            .and_then(|topology| topology.active_monitor.clone());
+        let active_workspace_id = diagnostics
+            .windowing
+            .topology
+            .as_ref()
+            .and_then(|topology| topology.active_workspace_id);
+        let mut warnings = Vec::new();
+        if diagnostics.readiness.degraded {
+            warnings.push(diagnostics.readiness.recommended_next_step.clone());
+        }
+        if let Some(error) = &screenshot_error {
+            warnings.push(format!("Screenshot capture failed: {error}"));
+        }
 
         Json(GetAppStateOutput {
             app_name_or_bundle_identifier: params.app_name_or_bundle_identifier,
@@ -327,6 +351,11 @@ impl ComputerUseLinux {
             backend: "linux-atspi".to_string(),
             screenshot,
             screenshot_error,
+            visual_confidence,
+            screenshot_backend,
+            active_monitor,
+            active_workspace_id,
+            warnings,
             accessibility_tree,
             accessibility_tree_raw_count,
             accessibility_error,
@@ -350,15 +379,25 @@ impl ComputerUseLinux {
         Parameters(params): Parameters<ScreenshotParams>,
     ) -> Result<CallToolResult, ErrorData> {
         let target = params.window_target();
-        let capture = self
-            .capture_for_window_target(
+        let capture = if let Some(monitor) = trimmed_nonempty(params.monitor.as_deref()) {
+            if target.is_some() {
+                return Err(ErrorData::invalid_params(
+                    "Pass either monitor or a window target, not both.",
+                    None,
+                ));
+            }
+            self.capture_monitor_screenshot(monitor, params.screenshot_options())
+                .await
+        } else {
+            self.capture_for_window_target(
                 target.as_ref(),
                 params.raise_window.unwrap_or(true),
                 params.full_screen.unwrap_or(false),
                 params.screenshot_options(),
             )
             .await
-            .map_err(|e| ErrorData::internal_error(format!("screenshot failed: {e}"), None))?;
+        }
+        .map_err(|e| ErrorData::internal_error(format!("screenshot failed: {e}"), None))?;
         let capture = capture.capture;
         let raw =
             decode_data_url(&capture.data_url).map_err(|e| ErrorData::internal_error(e, None))?;
@@ -377,12 +416,16 @@ impl ComputerUseLinux {
             "format": capture.format,
             "quality": capture.quality,
             "source": capture.source,
+            "screenshot_backend": capture.screenshot_backend,
+            "visual_confidence": capture.visual_confidence,
+            "failure_chain": capture.failure_chain,
             "cropped_to_window": capture.cropped_to_window.unwrap_or(false),
             "origin_x": capture.origin_x,
             "origin_y": capture.origin_y,
             "coordinate_space": capture.coordinate_space,
             "target_window_id": capture.target_window_id,
             "target_backend_window_id": capture.target_backend_window_id,
+            "target_monitor": capture.target_monitor,
             "focus_verified": capture.focus_verified,
         });
         Ok(CallToolResult::success(vec![
@@ -458,13 +501,7 @@ impl ComputerUseLinux {
         let target = match self.resolve_click_target(&params) {
             Ok(target) => target,
             Err(message) => {
-                return Json(ActionOutput {
-                    ok: false,
-                    implemented: true,
-                    action: "click".to_string(),
-                    message,
-                    received,
-                });
+                return Json(action_not_sent("click", message, received));
             }
         };
         if let ClickTarget::PrimaryAction {
@@ -473,11 +510,10 @@ impl ComputerUseLinux {
         } = target
         {
             return match invoke_accessibility_action(&object_ref, Some("0")).await {
-                Ok(invocation) => Json(ActionOutput {
-                    ok: invocation.ok,
-                    implemented: true,
-                    action: "click".to_string(),
-                    message: if invocation.ok {
+                Ok(invocation) => Json(action_invocation_result(
+                    "click",
+                    invocation.ok,
+                    if invocation.ok {
                         format!(
                             "No clickable bounds were cached, so I invoked the primary AT-SPI action{}.",
                             action_name
@@ -497,14 +533,14 @@ impl ComputerUseLinux {
                         )
                     },
                     received,
-                }),
-                Err(error) => Json(ActionOutput {
-                    ok: false,
-                    implemented: true,
-                    action: "click".to_string(),
-                    message: error.to_string(),
+                    "at-spi",
+                )),
+                Err(error) => Json(action_delivery_failed(
+                    "click",
+                    error.to_string(),
                     received,
-                }),
+                    "at-spi",
+                )),
             };
         }
         let ClickTarget::Coordinates {
@@ -519,13 +555,7 @@ impl ComputerUseLinux {
             match self.focus_last_screenshot_target_for_input().await {
                 Ok(focus) => focus,
                 Err(message) => {
-                    return Json(ActionOutput {
-                        ok: false,
-                        implemented: true,
-                        action: "click".to_string(),
-                        message,
-                        received,
-                    });
+                    return Json(action_not_sent_targeting_failed("click", message, received));
                 }
             }
         } else {
@@ -553,6 +583,7 @@ impl ComputerUseLinux {
                 "Action sent through the uinput absolute pointer.",
                 received,
                 focus.clone(),
+                "uinput-absolute-pointer",
             ));
         }
         if let Some(session) = self.cached_portal_pointer_session() {
@@ -571,6 +602,7 @@ impl ComputerUseLinux {
                         "Action sent through the remote desktop portal.",
                         received,
                         focus.clone(),
+                        "remote-desktop-portal",
                     ));
                 }
                 Err(_) => self.clear_portal_pointer_session(),
@@ -592,6 +624,7 @@ impl ComputerUseLinux {
                             "Action sent through the remote desktop portal.",
                             received,
                             focus.clone(),
+                            "remote-desktop-portal",
                         ));
                     }
                     Err(_) => self.clear_portal_pointer_session(),
@@ -653,38 +686,31 @@ impl ComputerUseLinux {
         ) {
             Ok(object_ref) => object_ref,
             Err(message) => {
-                return Json(ActionOutput {
-                    ok: false,
-                    implemented: true,
-                    action: "set_value".to_string(),
-                    message,
-                    received,
-                });
+                return Json(action_not_sent("set_value", message, received));
             }
         };
 
         match set_element_value(&object_ref, &params.value).await {
-            Ok(ValueSetInvocation::Numeric { value }) => Json(ActionOutput {
-                ok: true,
-                implemented: true,
-                action: "set_value".to_string(),
-                message: format!("AT-SPI numeric value set to {value}."),
+            Ok(ValueSetInvocation::Numeric { value }) => Json(action_invocation_result(
+                "set_value",
+                true,
+                format!("AT-SPI numeric value set to {value}."),
                 received,
-            }),
-            Ok(ValueSetInvocation::EditableText) => Json(ActionOutput {
-                ok: true,
-                implemented: true,
-                action: "set_value".to_string(),
-                message: "AT-SPI editable text contents set.".to_string(),
+                "at-spi",
+            )),
+            Ok(ValueSetInvocation::EditableText) => Json(action_invocation_result(
+                "set_value",
+                true,
+                "AT-SPI editable text contents set.",
                 received,
-            }),
-            Err(error) => Json(ActionOutput {
-                ok: false,
-                implemented: true,
-                action: "set_value".to_string(),
-                message: error.to_string(),
+                "at-spi",
+            )),
+            Err(error) => Json(action_delivery_failed(
+                "set_value",
+                error.to_string(),
                 received,
-            }),
+                "at-spi",
+            )),
         }
     }
 
@@ -705,13 +731,7 @@ impl ComputerUseLinux {
             match self.resolve_optional_target_point(params.x, params.y, params.element_index) {
                 Ok(point) => point,
                 Err(message) => {
-                    return Json(ActionOutput {
-                        ok: false,
-                        implemented: true,
-                        action: "scroll".to_string(),
-                        message,
-                        received,
-                    });
+                    return Json(action_not_sent("scroll", message, received));
                 }
             };
         let explicit_point = params.x.zip(params.y).is_some();
@@ -726,13 +746,9 @@ impl ComputerUseLinux {
             match self.focus_last_screenshot_target_for_input().await {
                 Ok(focus) => focus,
                 Err(message) => {
-                    return Json(ActionOutput {
-                        ok: false,
-                        implemented: true,
-                        action: "scroll".to_string(),
-                        message,
-                        received,
-                    });
+                    return Json(action_not_sent_targeting_failed(
+                        "scroll", message, received,
+                    ));
                 }
             }
         } else {
@@ -744,14 +760,11 @@ impl ComputerUseLinux {
             "left" => ScrollDirection::Left,
             "right" => ScrollDirection::Right,
             _ => {
-                return Json(ActionOutput {
-                    ok: false,
-                    implemented: true,
-                    action: "scroll".to_string(),
-                    message: "Unsupported scroll direction; expected up, down, left, or right."
-                        .to_string(),
+                return Json(action_not_sent(
+                    "scroll",
+                    "Unsupported scroll direction; expected up, down, left, or right.",
                     received,
-                });
+                ));
             }
         };
 
@@ -763,6 +776,7 @@ impl ComputerUseLinux {
                         "Action sent through the remote desktop portal.",
                         received,
                         focus.clone(),
+                        "remote-desktop-portal",
                     ));
                 }
                 Err(_) => self.clear_portal_pointer_session(),
@@ -777,6 +791,7 @@ impl ComputerUseLinux {
                                 "Action sent through the remote desktop portal.",
                                 received,
                                 focus.clone(),
+                                "remote-desktop-portal",
                             ));
                         }
                         Err(_) => self.clear_portal_pointer_session(),
@@ -792,14 +807,11 @@ impl ComputerUseLinux {
             "left" => (units, 0),
             "right" => (-units, 0),
             _ => {
-                return Json(ActionOutput {
-                    ok: false,
-                    implemented: true,
-                    action: "scroll".to_string(),
-                    message: "Unsupported scroll direction; expected up, down, left, or right."
-                        .to_string(),
+                return Json(action_not_sent(
+                    "scroll",
+                    "Unsupported scroll direction; expected up, down, left, or right.",
                     received,
-                });
+                ));
             }
         };
         let mut sequence = Vec::new();
@@ -831,13 +843,7 @@ impl ComputerUseLinux {
             match self.focus_last_screenshot_target_for_input().await {
                 Ok(focus) => focus,
                 Err(message) => {
-                    return Json(ActionOutput {
-                        ok: false,
-                        implemented: true,
-                        action: "drag".to_string(),
-                        message,
-                        received,
-                    });
+                    return Json(action_not_sent_targeting_failed("drag", message, received));
                 }
             }
         } else {
@@ -865,6 +871,7 @@ impl ComputerUseLinux {
                     "Action sent through the uinput absolute pointer.",
                     received,
                     focus,
+                    "uinput-absolute-pointer",
                 ));
             }
         }
@@ -876,6 +883,7 @@ impl ComputerUseLinux {
                         "Action sent through the remote desktop portal.",
                         received,
                         focus.clone(),
+                        "remote-desktop-portal",
                     ));
                 }
                 Err(_) => self.clear_portal_pointer_session(),
@@ -890,6 +898,7 @@ impl ComputerUseLinux {
                                 "Action sent through the remote desktop portal.",
                                 received,
                                 focus.clone(),
+                                "remote-desktop-portal",
                             ));
                         }
                         Err(_) => self.clear_portal_pointer_session(),
@@ -926,23 +935,19 @@ impl ComputerUseLinux {
         let focus = match self.focus_target_for_input(&params.window_target()).await {
             Ok(focus) => focus,
             Err(message) => {
-                return Json(ActionOutput {
-                    ok: false,
-                    implemented: true,
-                    action: "press_key".to_string(),
+                return Json(action_not_sent_targeting_failed(
+                    "press_key",
                     message,
                     received,
-                });
+                ));
             }
         };
         let Some(key_events) = key_sequence(&params.key) else {
-            return Json(ActionOutput {
-                ok: false,
-                implemented: true,
-                action: "press_key".to_string(),
-                message: "Unsupported key. Use names like Enter, Escape, Tab, ArrowLeft, Super, Ctrl+L, or a single US keyboard letter/digit.".to_string(),
+            return Json(action_not_sent(
+                "press_key",
+                "Unsupported key. Use names like Enter, Escape, Tab, ArrowLeft, Super, Ctrl+L, or a single US keyboard letter/digit.",
                 received,
-            });
+            ));
         };
         let mut args = vec!["key".to_string()];
         args.extend(key_events);
@@ -973,13 +978,11 @@ impl ComputerUseLinux {
         let focus = match self.focus_target_for_input(&params.window_target()).await {
             Ok(focus) => focus,
             Err(message) => {
-                return Json(ActionOutput {
-                    ok: false,
-                    implemented: true,
-                    action: "type_text".to_string(),
+                return Json(action_not_sent_targeting_failed(
+                    "type_text",
                     message,
                     received,
-                });
+                ));
             }
         };
         if self.should_prefer_kde_clipboard_text_backend() {
@@ -992,6 +995,7 @@ impl ComputerUseLinux {
                                 &message,
                                 received,
                                 focus,
+                                "kde-clipboard",
                             ));
                         }
                         Err(error) => {
@@ -1023,6 +1027,7 @@ impl ComputerUseLinux {
                                 "Action sent through the remote desktop portal.",
                                 received,
                                 focus,
+                                "remote-desktop-portal",
                             ));
                         }
                         Err(error) => {
@@ -1053,7 +1058,7 @@ impl ComputerUseLinux {
 #[tool_handler(
     name = "codex-computer-use-linux",
     version = "0.2.9-codex.1",
-    instructions = "Begin every turn that uses Computer Use by calling get_app_state. If diagnostics report disabled GNOME accessibility, call setup_accessibility before asking the user to retry. Use list_windows/focused_window before targeted keyboard input. If diagnostics report windowing.can_list_windows=false on GNOME, call setup_window_targeting to install the optional GNOME Shell extension backend, then ask the user to log out and back in if the setup report says a shell reload is required. This Linux backend can capture size-bounded screenshots through GNOME Shell, XDG Desktop Portal, or gnome-screenshot fallback, read AT-SPI trees with action/value metadata, invoke native AT-SPI actions, set AT-SPI values or editable text, list/focus compositor windows through registered Linux window backends when the session permits it, attach best-effort terminal tty/process metadata to terminal windows, and send coordinate or element-targeted click/scroll/drag input through the Wayland remote desktop portal when available, and send layout-safe literal type_text through KDE clipboard integration on Plasma Wayland or through portal keysyms on other Wayland sessions before falling back to ydotool. Screenshot results include width/height for the returned image plus coordinate_width/coordinate_height and scale for desktop coordinate conversion; request more detail with max_width, max_height, max_bytes, format=jpeg, quality, or a smaller target/crop instead of relying on unbounded screenshots. For element-targeted actions, prefer element_index from the latest get_app_state result; click, perform_action, and set_value can also use semantic role/name/text/states selectors when the target is unique. type_text and press_key accept optional window_id, pid, app_id, wm_class, title, tty, terminal_pid, terminal_command, or terminal_cwd selectors and refuse targeted input if focus cannot be verified."
+    instructions = "Begin every turn that uses Computer Use by calling get_app_state. If diagnostics report disabled GNOME accessibility, call setup_accessibility before asking the user to retry. Use list_windows/focused_window before targeted keyboard input. If diagnostics report windowing.can_list_windows=false on GNOME, call setup_window_targeting to install the optional GNOME Shell extension backend, then ask the user to log out and back in if the setup report says a shell reload is required. This Linux backend can capture size-bounded screenshots through GNOME Shell, Hyprland grim, XDG Desktop Portal, or gnome-screenshot fallback, read AT-SPI trees with action/value metadata, invoke native AT-SPI actions, set AT-SPI values or editable text, list/focus compositor windows through registered Linux window backends when the session permits it, attach best-effort terminal tty/process metadata to terminal windows, and send coordinate or element-targeted click/scroll/drag input through the Wayland remote desktop portal when available, and send layout-safe literal type_text through KDE clipboard integration on Plasma Wayland or through portal keysyms on other Wayland sessions before falling back to ydotool. Screenshot results include width/height for the returned image plus coordinate_width/coordinate_height, coordinate_space/origin metadata, scale, screenshot_backend, and visual_confidence; use monitor for Hyprland monitor capture, or request more detail with max_width, max_height, max_bytes, format=jpeg, quality, or a smaller target/crop instead of relying on unbounded screenshots. Action results separate delivery, targeting, and observed_outcome; ok=true means the action was delivered or invoked, not that the UI changed, unless observed_outcome says so. For element-targeted actions, prefer element_index from the latest get_app_state result; click, perform_action, and set_value can also use semantic role/name/text/states selectors when the target is unique. type_text and press_key accept optional window_id, pid, app_id, wm_class, title, tty, terminal_pid, terminal_command, or terminal_cwd selectors and refuse targeted input if focus cannot be verified."
 )]
 impl ServerHandler for ComputerUseLinux {}
 
@@ -1238,6 +1243,11 @@ struct GetAppStateOutput {
     backend: String,
     screenshot: Option<ScreenshotCapture>,
     screenshot_error: Option<String>,
+    visual_confidence: VisualConfidence,
+    screenshot_backend: Option<String>,
+    active_monitor: Option<String>,
+    active_workspace_id: Option<i32>,
+    warnings: Vec<String>,
     accessibility_tree: Vec<AccessibilityNode>,
     accessibility_tree_raw_count: usize,
     accessibility_error: Option<String>,
@@ -1440,6 +1450,10 @@ struct ActionOutput {
     implemented: bool,
     action: String,
     message: String,
+    delivery: ActionDelivery,
+    targeting: ActionTargeting,
+    observed_outcome: ActionObservedOutcome,
+    confidence: VisualConfidence,
     // Debug-only echo of the request. `serde_json::Value` serializes to a
     // non-object schema (schemars emits the boolean schema `true`), which strict
     // MCP clients reject in `outputSchema` — one invalid tool fails the whole
@@ -1447,6 +1461,59 @@ struct ActionOutput {
     // generated schema.
     #[schemars(skip)]
     received: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+enum ActionDeliveryStatus {
+    Delivered,
+    Failed,
+    NotSent,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+struct ActionDelivery {
+    status: ActionDeliveryStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    backend: Option<String>,
+    detail: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+enum ActionTargetingStatus {
+    Verified,
+    Failed,
+    NotRequested,
+    NotApplicable,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+struct ActionTargeting {
+    status: ActionTargetingStatus,
+    detail: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    requested_window_id: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    focused_window_id: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    verification: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+#[allow(dead_code)]
+enum ActionObservedOutcomeStatus {
+    NotObserved,
+    Verified,
+    Failed,
+    Unavailable,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+struct ActionObservedOutcome {
+    status: ActionObservedOutcomeStatus,
+    detail: String,
 }
 
 impl ComputerUseLinux {
@@ -1596,6 +1663,51 @@ impl ComputerUseLinux {
         candidates.into_iter().next()
     }
 
+    async fn capture_monitor_screenshot(
+        &self,
+        monitor_selector: &str,
+        screenshot_options: ScreenshotPayloadOptions,
+    ) -> Result<CapturedScreenshot> {
+        let topology = crate::windowing::backends::hyprland::topology_snapshot()?;
+        let monitor = topology
+            .monitors
+            .iter()
+            .find(|monitor| {
+                monitor.name == monitor_selector
+                    || monitor.id.to_string() == monitor_selector
+                    || monitor
+                        .description
+                        .as_deref()
+                        .is_some_and(|description| description == monitor_selector)
+            })
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "no Hyprland monitor matched {monitor_selector:?}; available monitors: {}",
+                    topology
+                        .monitors
+                        .iter()
+                        .map(|monitor| monitor.name.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            })?;
+        let bounds = crate::windowing::WindowBounds {
+            x: Some(monitor.x),
+            y: Some(monitor.y),
+            width: monitor.width,
+            height: monitor.height,
+        };
+        let raw = capture_region_with_grim_raw_named(&bounds, "hyprland-grim-monitor").await?;
+        let mut capture = prepare_screenshot_payload(raw, screenshot_options)?;
+        capture.origin_x = Some(monitor.x);
+        capture.origin_y = Some(monitor.y);
+        capture.coordinate_space = Some("global-logical".to_string());
+        capture.cropped_to_window = Some(false);
+        capture.target_monitor = Some(monitor.name.clone());
+        self.cache_screenshot_context(&capture);
+        Ok(CapturedScreenshot { capture })
+    }
+
     async fn capture_for_window_target(
         &self,
         target: Option<&WindowTarget>,
@@ -1709,9 +1821,12 @@ impl ComputerUseLinux {
             RawScreenshotCapture {
                 mime_type: "image/png".to_string(),
                 source: format!("{}-window-crop", capture.source),
+                backend: capture.backend,
                 bytes: png,
                 width: cropped_width,
                 height: cropped_height,
+                visual_confidence: capture.visual_confidence,
+                failure_chain: capture.failure_chain,
             },
             screenshot_options,
         )
@@ -1953,22 +2068,15 @@ impl ComputerUseLinux {
         ) {
             Ok(object_ref) => object_ref,
             Err(message) => {
-                return Json(ActionOutput {
-                    ok: false,
-                    implemented: true,
-                    action: "perform_action".to_string(),
-                    message,
-                    received,
-                });
+                return Json(action_not_sent("perform_action", message, received));
             }
         };
 
         match invoke_accessibility_action(&object_ref, requested_action).await {
-            Ok(invocation) => Json(ActionOutput {
-                ok: invocation.ok,
-                implemented: true,
-                action: "perform_action".to_string(),
-                message: if invocation.ok {
+            Ok(invocation) => Json(action_invocation_result(
+                "perform_action",
+                invocation.ok,
+                if invocation.ok {
                     format!(
                         "AT-SPI action {} ({}) invoked.",
                         invocation.action_index,
@@ -1990,14 +2098,14 @@ impl ComputerUseLinux {
                     )
                 },
                 received,
-            }),
-            Err(error) => Json(ActionOutput {
-                ok: false,
-                implemented: true,
-                action: "perform_action".to_string(),
-                message: error.to_string(),
+                "at-spi",
+            )),
+            Err(error) => Json(action_delivery_failed(
+                "perform_action",
+                error.to_string(),
                 received,
-            }),
+                "at-spi",
+            )),
         }
     }
 }
@@ -2409,7 +2517,7 @@ fn env_contains(key: &str, needle: &str) -> bool {
 fn mark_global_capture(capture: &mut ScreenshotCapture) {
     capture.origin_x = Some(0);
     capture.origin_y = Some(0);
-    capture.coordinate_space = Some("global".to_string());
+    capture.coordinate_space = Some("global-logical".to_string());
     capture.cropped_to_window = Some(false);
 }
 
@@ -2432,6 +2540,9 @@ fn annotate_window_capture(
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
 struct ScreenshotParams {
+    /// Hyprland monitor name or id to capture, for example "DP-1" or "0".
+    #[serde(default)]
+    monitor: Option<String>,
     #[serde(default)]
     window_id: Option<u64>,
     #[serde(default)]
@@ -2553,20 +2664,8 @@ fn action_result(
     received: Option<serde_json::Value>,
 ) -> ActionOutput {
     match result {
-        Ok(_) => ActionOutput {
-            ok: true,
-            implemented: true,
-            action: action.to_string(),
-            message: "Action sent through ydotool.".to_string(),
-            received,
-        },
-        Err(message) => ActionOutput {
-            ok: false,
-            implemented: true,
-            action: action.to_string(),
-            message,
-            received,
-        },
+        Ok(_) => action_delivered(action, "Action sent through ydotool.", received, "ydotool"),
+        Err(message) => action_delivery_failed(action, message, received, "ydotool"),
     }
 }
 
@@ -2584,17 +2683,9 @@ fn successful_action_with_focus(
     message: &str,
     received: Option<serde_json::Value>,
     focus: Option<WindowFocusResult>,
+    backend: &str,
 ) -> ActionOutput {
-    with_focus_context(
-        ActionOutput {
-            ok: true,
-            implemented: true,
-            action: action.to_string(),
-            message: message.to_string(),
-            received,
-        },
-        focus,
-    )
+    with_focus_context(action_delivered(action, message, received, backend), focus)
 }
 
 fn with_focus_context(mut output: ActionOutput, focus: Option<WindowFocusResult>) -> ActionOutput {
@@ -2609,9 +2700,177 @@ fn with_focus_context(mut output: ActionOutput, focus: Option<WindowFocusResult>
                 "{} Target window_id {} was focused with {verification} verification before input.",
                 output.message, focus.requested_window.window_id,
             );
+            output.targeting = ActionTargeting::verified(&focus, verification);
         }
     }
     output
+}
+
+fn action_not_sent(
+    action: &str,
+    message: impl Into<String>,
+    received: Option<serde_json::Value>,
+) -> ActionOutput {
+    ActionOutput {
+        ok: false,
+        implemented: true,
+        action: action.to_string(),
+        message: message.into(),
+        delivery: ActionDelivery::not_sent(),
+        targeting: ActionTargeting::not_requested(),
+        observed_outcome: ActionObservedOutcome::not_observed(),
+        confidence: VisualConfidence::Unavailable,
+        received,
+    }
+}
+
+fn action_not_sent_targeting_failed(
+    action: &str,
+    message: impl Into<String>,
+    received: Option<serde_json::Value>,
+) -> ActionOutput {
+    let message = message.into();
+    let mut output = action_not_sent(action, message.clone(), received);
+    output.targeting = ActionTargeting::failed(message);
+    output
+}
+
+fn action_delivered(
+    action: &str,
+    message: impl Into<String>,
+    received: Option<serde_json::Value>,
+    backend: &str,
+) -> ActionOutput {
+    let message = message.into();
+    ActionOutput {
+        ok: true,
+        implemented: true,
+        action: action.to_string(),
+        message: message.clone(),
+        delivery: ActionDelivery::delivered(backend, message),
+        targeting: ActionTargeting::not_requested(),
+        observed_outcome: ActionObservedOutcome::not_observed(),
+        confidence: VisualConfidence::Unavailable,
+        received,
+    }
+}
+
+fn action_delivery_failed(
+    action: &str,
+    message: impl Into<String>,
+    received: Option<serde_json::Value>,
+    backend: &str,
+) -> ActionOutput {
+    let message = message.into();
+    ActionOutput {
+        ok: false,
+        implemented: true,
+        action: action.to_string(),
+        message: message.clone(),
+        delivery: ActionDelivery::failed(backend, message),
+        targeting: ActionTargeting::not_requested(),
+        observed_outcome: ActionObservedOutcome::not_observed(),
+        confidence: VisualConfidence::Unavailable,
+        received,
+    }
+}
+
+fn action_invocation_result(
+    action: &str,
+    ok: bool,
+    message: impl Into<String>,
+    received: Option<serde_json::Value>,
+    backend: &str,
+) -> ActionOutput {
+    let mut output = if ok {
+        action_delivered(action, message, received, backend)
+    } else {
+        action_delivery_failed(action, message, received, backend)
+    };
+    output.targeting = ActionTargeting::not_applicable(
+        "The action addressed an accessibility object, not a target window.",
+    );
+    output
+}
+
+impl ActionDelivery {
+    fn delivered(backend: &str, detail: String) -> Self {
+        Self {
+            status: ActionDeliveryStatus::Delivered,
+            backend: Some(backend.to_string()),
+            detail,
+        }
+    }
+
+    fn failed(backend: &str, detail: String) -> Self {
+        Self {
+            status: ActionDeliveryStatus::Failed,
+            backend: Some(backend.to_string()),
+            detail,
+        }
+    }
+
+    fn not_sent() -> Self {
+        Self {
+            status: ActionDeliveryStatus::NotSent,
+            backend: None,
+            detail: "No input event or accessibility action was sent.".to_string(),
+        }
+    }
+}
+
+impl ActionTargeting {
+    fn verified(focus: &WindowFocusResult, verification: &str) -> Self {
+        Self {
+            status: ActionTargetingStatus::Verified,
+            detail: format!(
+                "Target window_id {} was focused with {verification} verification before input.",
+                focus.requested_window.window_id
+            ),
+            requested_window_id: Some(focus.requested_window.window_id),
+            focused_window_id: focus.focused_window.as_ref().map(|window| window.window_id),
+            verification: Some(verification.to_string()),
+        }
+    }
+
+    fn failed(detail: impl Into<String>) -> Self {
+        Self {
+            status: ActionTargetingStatus::Failed,
+            detail: detail.into(),
+            requested_window_id: None,
+            focused_window_id: None,
+            verification: None,
+        }
+    }
+
+    fn not_requested() -> Self {
+        Self {
+            status: ActionTargetingStatus::NotRequested,
+            detail: "No target-window focus verification was requested.".to_string(),
+            requested_window_id: None,
+            focused_window_id: None,
+            verification: None,
+        }
+    }
+
+    fn not_applicable(detail: impl Into<String>) -> Self {
+        Self {
+            status: ActionTargetingStatus::NotApplicable,
+            detail: detail.into(),
+            requested_window_id: None,
+            focused_window_id: None,
+            verification: None,
+        }
+    }
+}
+
+impl ActionObservedOutcome {
+    fn not_observed() -> Self {
+        Self {
+            status: ActionObservedOutcomeStatus::NotObserved,
+            detail: "No post-action observation was collected; delivery does not prove that the UI changed.".to_string(),
+        }
+    }
 }
 
 fn focus_satisfies_target(focus: &WindowFocusResult, target: &WindowTarget) -> bool {
@@ -3143,12 +3402,16 @@ mod tests {
             max_bytes: 0,
             format: ScreenshotOutputFormat::Png,
             quality: None,
+            screenshot_backend: "test".to_string(),
+            visual_confidence: VisualConfidence::Full,
+            failure_chain: Vec::new(),
             origin_x: Some(origin_x),
             origin_y: Some(origin_y),
             coordinate_space: Some("window-local".to_string()),
             cropped_to_window: Some(true),
             target_window_id,
             target_backend_window_id: Some("0x2a".to_string()),
+            target_monitor: None,
             focus_verified: Some(true),
         }
     }
@@ -3652,6 +3915,107 @@ mod tests {
             .unwrap_err();
 
         assert!(error.contains("No clickable bounds cached for element_index 7"));
+    }
+
+    #[test]
+    fn action_result_reports_delivery_without_observed_outcome() {
+        let output = action_result("press_key", Ok(Vec::new()), None);
+
+        assert!(output.ok);
+        assert_eq!(output.delivery.status, ActionDeliveryStatus::Delivered);
+        assert_eq!(output.delivery.backend.as_deref(), Some("ydotool"));
+        assert_eq!(output.targeting.status, ActionTargetingStatus::NotRequested);
+        assert_eq!(
+            output.observed_outcome.status,
+            ActionObservedOutcomeStatus::NotObserved
+        );
+        assert_eq!(output.confidence, VisualConfidence::Unavailable);
+        assert!(output
+            .observed_outcome
+            .detail
+            .contains("does not prove that the UI changed"));
+    }
+
+    #[test]
+    fn focus_context_reports_targeting_separately_from_outcome() {
+        let requested = window_info(
+            42,
+            Some("Terminal"),
+            Some("kitty"),
+            Some("kitty"),
+            Some(1000),
+        );
+        let focus = WindowFocusResult {
+            requested_window: requested.clone(),
+            focused_window: Some(requested),
+            exact_window_focused: true,
+            app_focused: true,
+            backend: GNOME_SHELL_EXTENSION_BACKEND.to_string(),
+            note: "focused".to_string(),
+        };
+
+        let output = with_focus_context(
+            action_delivered(
+                "click",
+                "Action sent through the uinput absolute pointer.",
+                None,
+                "uinput-absolute-pointer",
+            ),
+            Some(focus),
+        );
+
+        assert!(output.ok);
+        assert_eq!(output.delivery.status, ActionDeliveryStatus::Delivered);
+        assert_eq!(output.targeting.status, ActionTargetingStatus::Verified);
+        assert_eq!(output.targeting.requested_window_id, Some(42));
+        assert_eq!(output.targeting.focused_window_id, Some(42));
+        assert_eq!(
+            output.targeting.verification.as_deref(),
+            Some("exact window-focus")
+        );
+        assert_eq!(
+            output.observed_outcome.status,
+            ActionObservedOutcomeStatus::NotObserved
+        );
+        assert_eq!(output.confidence, VisualConfidence::Unavailable);
+    }
+
+    #[test]
+    fn failed_action_reports_failed_delivery_and_no_observed_outcome() {
+        let output = action_result("type_text", Err("ydotool failed".to_string()), None);
+
+        assert!(!output.ok);
+        assert_eq!(output.delivery.status, ActionDeliveryStatus::Failed);
+        assert_eq!(output.delivery.backend.as_deref(), Some("ydotool"));
+        assert!(output.delivery.detail.contains("ydotool failed"));
+        assert_eq!(
+            output.observed_outcome.status,
+            ActionObservedOutcomeStatus::NotObserved
+        );
+        assert_eq!(output.confidence, VisualConfidence::Unavailable);
+    }
+
+    #[test]
+    fn accessibility_invocation_targeting_is_not_window_targeting() {
+        let output = action_invocation_result(
+            "perform_action",
+            true,
+            "AT-SPI action 0 invoked.",
+            None,
+            "at-spi",
+        );
+
+        assert!(output.ok);
+        assert_eq!(output.delivery.status, ActionDeliveryStatus::Delivered);
+        assert_eq!(output.delivery.backend.as_deref(), Some("at-spi"));
+        assert_eq!(
+            output.targeting.status,
+            ActionTargetingStatus::NotApplicable
+        );
+        assert_eq!(
+            output.observed_outcome.status,
+            ActionObservedOutcomeStatus::NotObserved
+        );
     }
 
     #[test]

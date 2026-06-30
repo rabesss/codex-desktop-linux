@@ -3,7 +3,8 @@ use crate::windowing::command_runner::{CommandRunner, RealCommandRunner};
 use crate::windowing::registry::BackendProbe;
 use crate::windowing::types::{WindowBounds, WindowInfo};
 use anyhow::{bail, Context, Result};
-use serde::Deserialize;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::os::unix::fs::{FileTypeExt, MetadataExt};
 use std::path::{Path, PathBuf};
@@ -11,6 +12,7 @@ use std::process::Command;
 use std::time::SystemTime;
 
 pub const HYPRLAND_BACKEND: &str = "hyprland";
+const DEFAULT_WORKSPACE_GROUP_SIZE: u32 = 10;
 
 pub fn probe() -> BackendProbe {
     let runner = RealCommandRunner;
@@ -97,6 +99,113 @@ fn focused_window_with_runner(runner: &impl CommandRunner) -> Result<Option<Wind
     parse_hyprland_active_window(&String::from_utf8_lossy(&output.stdout))
 }
 
+pub fn topology_snapshot() -> Result<HyprlandTopologySnapshot> {
+    let runner = RealCommandRunner;
+    topology_snapshot_with_runner(&runner, workspace_group_size())
+}
+
+fn topology_snapshot_with_runner(
+    runner: &impl CommandRunner,
+    workspace_group_size: u32,
+) -> Result<HyprlandTopologySnapshot> {
+    let monitors_json = hyprctl_json_output_with_runner(runner, &["monitors", "all", "-j"])
+        .context("failed to read Hyprland monitors")?;
+    let workspaces_json = hyprctl_json_output_with_runner(runner, &["workspaces", "-j"])
+        .context("failed to read Hyprland workspaces")?;
+    let clients_json = hyprctl_json_output_with_runner(runner, &["clients", "-j"])
+        .context("failed to read Hyprland clients")?;
+    let active_window_json = hyprctl_json_output_with_runner(runner, &["activewindow", "-j"])
+        .context("failed to read Hyprland active window")?;
+    let active_workspace_json = hyprctl_json_output_with_runner(runner, &["activeworkspace", "-j"])
+        .context("failed to read Hyprland active workspace")?;
+
+    parse_hyprland_topology(
+        &monitors_json,
+        &workspaces_json,
+        &clients_json,
+        &active_window_json,
+        &active_workspace_json,
+        workspace_group_size,
+    )
+}
+
+pub(crate) fn parse_hyprland_topology(
+    monitors_json: &str,
+    workspaces_json: &str,
+    clients_json: &str,
+    active_window_json: &str,
+    active_workspace_json: &str,
+    workspace_group_size: u32,
+) -> Result<HyprlandTopologySnapshot> {
+    let monitor_inputs: Vec<HyprlandMonitorInput> = serde_json::from_str(monitors_json)
+        .context("failed to parse hyprctl monitors -j output")?;
+    let workspace_inputs: Vec<HyprlandWorkspaceInput> = serde_json::from_str(workspaces_json)
+        .context("failed to parse hyprctl workspaces -j output")?;
+    let client_inputs: Vec<HyprlandClient> =
+        serde_json::from_str(clients_json).context("failed to parse hyprctl clients -j output")?;
+    let active_window_input: serde_json::Value = serde_json::from_str(active_window_json)
+        .context("failed to parse hyprctl activewindow -j output")?;
+    let active_workspace_input: serde_json::Value = serde_json::from_str(active_workspace_json)
+        .context("failed to parse hyprctl activeworkspace -j output")?;
+
+    let active_workspace_id = active_workspace_input
+        .get("id")
+        .and_then(serde_json::Value::as_i64)
+        .and_then(|value| i32::try_from(value).ok());
+    let active_window = active_window_input
+        .get("address")
+        .and_then(serde_json::Value::as_str)
+        .and_then(|address| normalize_hyprland_address(address).ok());
+
+    let monitors = monitor_inputs
+        .into_iter()
+        .map(HyprlandTopologyMonitor::from)
+        .collect::<Vec<_>>();
+    let visible_workspace_ids = visible_workspace_ids(&monitors);
+    let workspaces = workspace_inputs
+        .into_iter()
+        .map(|workspace| {
+            HyprlandTopologyWorkspace::from_input(
+                workspace,
+                active_workspace_id,
+                &visible_workspace_ids,
+                workspace_group_size,
+            )
+        })
+        .collect::<Vec<_>>();
+    let clients = client_inputs
+        .into_iter()
+        .filter_map(|client| {
+            HyprlandTopologyClient::from_input(client, &monitors, &visible_workspace_ids)
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    let active_monitor = monitors
+        .iter()
+        .find(|monitor| monitor.focused)
+        .map(|monitor| monitor.name.clone())
+        .or_else(|| {
+            active_window.as_ref().and_then(|active_window| {
+                clients
+                    .iter()
+                    .find(|client| client.address == *active_window)
+                    .and_then(|client| client.monitor_name.clone())
+            })
+        });
+
+    Ok(HyprlandTopologySnapshot {
+        backend: HYPRLAND_BACKEND.to_string(),
+        coordinate_space: "hyprland-global-logical".to_string(),
+        workspace_group_size,
+        monitors,
+        workspaces,
+        clients,
+        active_monitor,
+        active_workspace_id,
+        active_window,
+    })
+}
+
 pub(crate) fn parse_hyprland_clients(json: &str) -> Result<Vec<WindowInfo>> {
     let clients: Vec<HyprlandClient> =
         serde_json::from_str(json).context("failed to parse hyprctl clients -j output")?;
@@ -127,6 +236,264 @@ pub(crate) fn parse_hyprland_active_window(json: &str) -> Result<Option<WindowIn
     let mut window = WindowInfo::try_from(client)?;
     window.focused = true;
     Ok(Some(window))
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct HyprlandTopologySnapshot {
+    pub backend: String,
+    pub coordinate_space: String,
+    pub workspace_group_size: u32,
+    pub monitors: Vec<HyprlandTopologyMonitor>,
+    pub workspaces: Vec<HyprlandTopologyWorkspace>,
+    pub clients: Vec<HyprlandTopologyClient>,
+    pub active_monitor: Option<String>,
+    pub active_workspace_id: Option<i32>,
+    pub active_window: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct HyprlandTopologyMonitor {
+    pub id: i32,
+    pub name: String,
+    pub description: Option<String>,
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+    pub physical_width: Option<u32>,
+    pub physical_height: Option<u32>,
+    pub scale: f64,
+    pub transform: i32,
+    pub reserved: Option<[i32; 4]>,
+    pub active_workspace_id: Option<i32>,
+    pub special_workspace_id: Option<i32>,
+    pub focused: bool,
+    pub disabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct HyprlandTopologyWorkspace {
+    pub id: i32,
+    pub name: String,
+    pub monitor: Option<String>,
+    pub visible: bool,
+    pub active: bool,
+    pub group_index: Option<i32>,
+    pub group_slot: Option<i32>,
+    pub is_special: bool,
+    pub windows_count: u32,
+    pub has_fullscreen: bool,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct HyprlandTopologyClient {
+    pub address: String,
+    pub stable_id: Option<String>,
+    pub title: Option<String>,
+    pub app_id: Option<String>,
+    pub pid: Option<u32>,
+    pub workspace_id: Option<i32>,
+    pub monitor_id: Option<i32>,
+    pub monitor_name: Option<String>,
+    pub geometry: Option<WindowBounds>,
+    pub mapped: bool,
+    pub visible: bool,
+    pub accepts_input: bool,
+    pub floating: bool,
+    pub fullscreen: bool,
+    pub pinned: bool,
+    pub grouped: bool,
+    pub hidden: bool,
+    pub action_ready: bool,
+}
+
+impl From<HyprlandMonitorInput> for HyprlandTopologyMonitor {
+    fn from(monitor: HyprlandMonitorInput) -> Self {
+        Self {
+            id: monitor.id,
+            name: monitor.name,
+            description: monitor.description,
+            x: monitor.x,
+            y: monitor.y,
+            width: monitor.width,
+            height: monitor.height,
+            physical_width: monitor.physical_width,
+            physical_height: monitor.physical_height,
+            scale: monitor.scale.unwrap_or(1.0),
+            transform: monitor.transform.unwrap_or(0),
+            reserved: monitor.reserved,
+            active_workspace_id: monitor.active_workspace.and_then(|workspace| workspace.id),
+            special_workspace_id: monitor.special_workspace.and_then(|workspace| workspace.id),
+            focused: monitor.focused.unwrap_or(false),
+            disabled: monitor.disabled.unwrap_or(false),
+        }
+    }
+}
+
+impl HyprlandTopologyWorkspace {
+    fn from_input(
+        workspace: HyprlandWorkspaceInput,
+        active_workspace_id: Option<i32>,
+        visible_workspace_ids: &[i32],
+        workspace_group_size: u32,
+    ) -> Self {
+        let is_special = workspace_is_special(workspace.id, &workspace.name);
+        let (group_index, group_slot) = workspace_group(workspace.id, workspace_group_size);
+        Self {
+            id: workspace.id,
+            name: workspace.name,
+            monitor: workspace.monitor,
+            visible: visible_workspace_ids.contains(&workspace.id),
+            active: active_workspace_id == Some(workspace.id),
+            group_index,
+            group_slot,
+            is_special,
+            windows_count: workspace.windows.unwrap_or(0),
+            has_fullscreen: workspace.has_fullscreen.unwrap_or(false),
+        }
+    }
+}
+
+impl HyprlandTopologyClient {
+    fn from_input(
+        client: HyprlandClient,
+        monitors: &[HyprlandTopologyMonitor],
+        visible_workspace_ids: &[i32],
+    ) -> Option<Result<Self>> {
+        let address = match normalize_hyprland_address(&client.address) {
+            Ok(address) => address,
+            Err(error) => return Some(Err(error)),
+        };
+        let mapped = client.mapped.unwrap_or(true);
+        if !mapped {
+            return None;
+        }
+
+        let hidden = client.hidden.unwrap_or(false);
+        let compositor_visible = client.visible.unwrap_or(true);
+        let accepts_input = client.accepts_input.unwrap_or(true);
+        let workspace_id = client.workspace.as_ref().and_then(|workspace| workspace.id);
+        let pinned = client.pinned.unwrap_or(false);
+        let workspace_visible = workspace_id
+            .map(|id| visible_workspace_ids.contains(&id))
+            .unwrap_or(false);
+        let visible = compositor_visible && !hidden && (pinned || workspace_visible);
+        let geometry = client_geometry(&client);
+        let monitor_id = client.monitor.or_else(|| {
+            geometry
+                .as_ref()
+                .and_then(|bounds| monitor_for_bounds(bounds, monitors).map(|monitor| monitor.id))
+        });
+        let monitor_name = monitor_id.and_then(|id| {
+            monitors
+                .iter()
+                .find(|monitor| monitor.id == id)
+                .map(|monitor| monitor.name.clone())
+        });
+        let overlaps_monitor = geometry
+            .as_ref()
+            .is_some_and(|bounds| monitor_for_bounds(bounds, monitors).is_some());
+        let action_ready =
+            mapped && visible && accepts_input && monitor_name.is_some() && overlaps_monitor;
+
+        Some(Ok(Self {
+            address,
+            stable_id: client.stable_id,
+            title: client.title,
+            app_id: client.class_name,
+            pid: client.pid.and_then(|pid| u32::try_from(pid).ok()),
+            workspace_id,
+            monitor_id,
+            monitor_name,
+            geometry,
+            mapped,
+            visible,
+            accepts_input,
+            floating: client.floating.unwrap_or(false),
+            fullscreen: client.fullscreen.unwrap_or(0) != 0,
+            pinned,
+            grouped: client
+                .grouped
+                .as_ref()
+                .is_some_and(|group| !group.is_empty()),
+            hidden,
+            action_ready,
+        }))
+    }
+}
+
+fn visible_workspace_ids(monitors: &[HyprlandTopologyMonitor]) -> Vec<i32> {
+    let mut ids = Vec::new();
+    for monitor in monitors {
+        if let Some(id) = monitor.active_workspace_id {
+            push_unique_i32(&mut ids, id);
+        }
+        if let Some(id) = monitor.special_workspace_id.filter(|id| *id != 0) {
+            push_unique_i32(&mut ids, id);
+        }
+    }
+    ids
+}
+
+fn push_unique_i32(values: &mut Vec<i32>, value: i32) {
+    if !values.contains(&value) {
+        values.push(value);
+    }
+}
+
+fn workspace_group(id: i32, group_size: u32) -> (Option<i32>, Option<i32>) {
+    if id <= 0 || group_size == 0 {
+        return (None, None);
+    }
+    let zero_based = id - 1;
+    let group_size = i32::try_from(group_size).unwrap_or(DEFAULT_WORKSPACE_GROUP_SIZE as i32);
+    (
+        Some(zero_based / group_size),
+        Some((zero_based % group_size) + 1),
+    )
+}
+
+fn workspace_is_special(id: i32, name: &str) -> bool {
+    id < 0 || name.starts_with("special:")
+}
+
+fn workspace_group_size() -> u32 {
+    std::env::var("CODEX_COMPUTER_USE_WORKSPACE_GROUP_SIZE")
+        .ok()
+        .and_then(|value| value.parse::<u32>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_WORKSPACE_GROUP_SIZE)
+}
+
+fn client_geometry(client: &HyprlandClient) -> Option<WindowBounds> {
+    client.size.map(|[width, height]| WindowBounds {
+        x: client.at.map(|[x, _]| x),
+        y: client.at.map(|[_, y]| y),
+        width,
+        height,
+    })
+}
+
+fn monitor_for_bounds<'a>(
+    bounds: &WindowBounds,
+    monitors: &'a [HyprlandTopologyMonitor],
+) -> Option<&'a HyprlandTopologyMonitor> {
+    let x = bounds.x?;
+    let y = bounds.y?;
+    let right = x.saturating_add(i32::try_from(bounds.width).ok()?);
+    let bottom = y.saturating_add(i32::try_from(bounds.height).ok()?);
+    monitors.iter().find(|monitor| {
+        if monitor.disabled {
+            return false;
+        }
+        let monitor_right = monitor
+            .x
+            .saturating_add(i32::try_from(monitor.width).unwrap_or(i32::MAX));
+        let monitor_bottom = monitor
+            .y
+            .saturating_add(i32::try_from(monitor.height).unwrap_or(i32::MAX));
+        x < monitor_right && right > monitor.x && y < monitor_bottom && bottom > monitor.y
+    })
 }
 
 pub fn activate_window(window_id: u64) -> Result<()> {
@@ -172,6 +539,19 @@ fn hyprctl_output_with_runner(
         inferred_signature.as_deref(),
         has_env_signature,
     )
+}
+
+fn hyprctl_json_output_with_runner(runner: &impl CommandRunner, args: &[&str]) -> Result<String> {
+    let output = hyprctl_output_with_runner(runner, args)
+        .with_context(|| format!("failed to run hyprctl {}", args.join(" ")))?;
+    if !output.status.success() {
+        bail!(
+            "hyprctl {} failed: {}",
+            args.join(" "),
+            hyprctl_output_detail(&output)
+        );
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
 fn hyprctl_output_with_runner_and_signature(
@@ -459,28 +839,364 @@ mod tests {
 
         assert!(hyprctl_dispatch_succeeded(&output));
     }
+
+    #[test]
+    fn parses_topology_with_multi_monitor_workspace_and_client_state() {
+        let monitors = r#"[
+          {
+            "id": 0,
+            "name": "LEFT",
+            "description": "Left Display",
+            "width": 1920,
+            "height": 1080,
+            "physicalWidth": 500,
+            "physicalHeight": 300,
+            "x": -1920,
+            "y": 0,
+            "scale": 1.25,
+            "transform": 0,
+            "reserved": [0, 32, 0, 0],
+            "activeWorkspace": {"id": 1, "name": "1"},
+            "specialWorkspace": {"id": -99, "name": "special:scratch"},
+            "focused": false,
+            "disabled": false
+          },
+          {
+            "id": 1,
+            "name": "RIGHT",
+            "description": "Right Display",
+            "width": 2560,
+            "height": 1440,
+            "physicalWidth": 600,
+            "physicalHeight": 340,
+            "x": 0,
+            "y": 0,
+            "scale": 1.0,
+            "transform": 2,
+            "reserved": [0, 40, 0, 0],
+            "activeWorkspace": {"id": 11, "name": "11"},
+            "specialWorkspace": {"id": 0, "name": ""},
+            "focused": true,
+            "disabled": false
+          }
+        ]"#;
+        let workspaces = r#"[
+          {"id": 1, "name": "1", "monitor": "LEFT", "windows": 1, "hasfullscreen": false},
+          {"id": 2, "name": "2", "monitor": "LEFT", "windows": 2, "hasfullscreen": false},
+          {"id": 11, "name": "11", "monitor": "RIGHT", "windows": 1, "hasfullscreen": true},
+          {"id": -99, "name": "special:scratch", "monitor": "LEFT", "windows": 1, "hasfullscreen": false}
+        ]"#;
+        let clients = r#"[
+          {
+            "address": "0x1",
+            "mapped": true,
+            "hidden": false,
+            "visible": true,
+            "acceptsInput": true,
+            "at": [-1900, 20],
+            "size": [800, 600],
+            "workspace": {"id": 1, "name": "1"},
+            "monitor": 0,
+            "class": "terminal",
+            "title": "Terminal",
+            "pid": 101,
+            "xwayland": false,
+            "floating": false,
+            "fullscreen": 0,
+            "pinned": false,
+            "grouped": [],
+            "focusHistoryID": 4,
+            "stableId": "stable-1"
+          },
+          {
+            "address": "0x2",
+            "mapped": true,
+            "hidden": false,
+            "visible": true,
+            "acceptsInput": true,
+            "at": [10, 40],
+            "size": [1200, 800],
+            "workspace": {"id": 11, "name": "11"},
+            "monitor": 1,
+            "class": "browser",
+            "title": "Browser",
+            "pid": 202,
+            "xwayland": false,
+            "floating": false,
+            "fullscreen": 2,
+            "pinned": false,
+            "grouped": ["0xabc"],
+            "focusHistoryID": 0,
+            "stableId": "stable-2"
+          },
+          {
+            "address": "0x3",
+            "mapped": true,
+            "hidden": false,
+            "visible": true,
+            "acceptsInput": true,
+            "at": [-1800, 40],
+            "size": [600, 400],
+            "workspace": {"id": 2, "name": "2"},
+            "monitor": 0,
+            "class": "hidden-workspace",
+            "title": "Hidden Workspace",
+            "pid": 303,
+            "xwayland": false,
+            "floating": false,
+            "fullscreen": 0,
+            "pinned": false,
+            "grouped": [],
+            "focusHistoryID": 6,
+            "stableId": "stable-3"
+          },
+          {
+            "address": "0x4",
+            "mapped": true,
+            "hidden": false,
+            "visible": true,
+            "acceptsInput": true,
+            "at": [100, 100],
+            "size": [500, 500],
+            "workspace": {"id": 2, "name": "2"},
+            "monitor": 1,
+            "class": "pinned",
+            "title": "Pinned",
+            "pid": 404,
+            "xwayland": false,
+            "floating": true,
+            "fullscreen": 0,
+            "pinned": true,
+            "grouped": [],
+            "focusHistoryID": 5,
+            "stableId": "stable-4"
+          },
+          {
+            "address": "0x5",
+            "mapped": true,
+            "hidden": false,
+            "visible": true,
+            "acceptsInput": true,
+            "at": [-1700, 60],
+            "size": [400, 300],
+            "workspace": {"id": -99, "name": "special:scratch"},
+            "monitor": 0,
+            "class": "scratch",
+            "title": "Scratch",
+            "pid": 505,
+            "xwayland": false,
+            "floating": true,
+            "fullscreen": 0,
+            "pinned": false,
+            "grouped": [],
+            "focusHistoryID": 7,
+            "stableId": "stable-5"
+          },
+          {
+            "address": "0x6",
+            "mapped": false,
+            "hidden": false,
+            "visible": false,
+            "acceptsInput": true,
+            "at": [20, 20],
+            "size": [300, 200],
+            "workspace": {"id": 1, "name": "1"},
+            "monitor": 0,
+            "class": "unmapped",
+            "title": "Unmapped",
+            "pid": 606,
+            "xwayland": false,
+            "floating": false,
+            "fullscreen": 0,
+            "pinned": false,
+            "grouped": [],
+            "focusHistoryID": 8,
+            "stableId": "stable-6"
+          },
+          {
+            "address": "0x7",
+            "mapped": true,
+            "hidden": true,
+            "visible": true,
+            "acceptsInput": true,
+            "at": [-1600, 80],
+            "size": [300, 200],
+            "workspace": {"id": 1, "name": "1"},
+            "monitor": 0,
+            "class": "hidden",
+            "title": "Hidden",
+            "pid": 707,
+            "xwayland": false,
+            "floating": false,
+            "fullscreen": 0,
+            "pinned": false,
+            "grouped": [],
+            "focusHistoryID": 9,
+            "stableId": "stable-7"
+          }
+        ]"#;
+
+        let topology = parse_hyprland_topology(
+            monitors,
+            workspaces,
+            clients,
+            r#"{"address": "0x2"}"#,
+            r#"{"id": 11, "name": "11"}"#,
+            10,
+        )
+        .unwrap();
+
+        assert_eq!(topology.coordinate_space, "hyprland-global-logical");
+        assert_eq!(topology.active_monitor.as_deref(), Some("RIGHT"));
+        assert_eq!(topology.active_workspace_id, Some(11));
+        assert_eq!(topology.active_window.as_deref(), Some("0x2"));
+
+        let left = topology
+            .monitors
+            .iter()
+            .find(|monitor| monitor.name == "LEFT")
+            .unwrap();
+        assert_eq!(left.x, -1920);
+        assert_eq!(left.scale, 1.25);
+        let right = topology
+            .monitors
+            .iter()
+            .find(|monitor| monitor.name == "RIGHT")
+            .unwrap();
+        assert_eq!(right.transform, 2);
+
+        let workspace_11 = topology
+            .workspaces
+            .iter()
+            .find(|workspace| workspace.id == 11)
+            .unwrap();
+        assert!(workspace_11.visible);
+        assert!(workspace_11.active);
+        assert_eq!(workspace_11.group_index, Some(1));
+        assert_eq!(workspace_11.group_slot, Some(1));
+
+        let special = topology
+            .workspaces
+            .iter()
+            .find(|workspace| workspace.id == -99)
+            .unwrap();
+        assert!(special.is_special);
+        assert!(special.visible);
+        assert_eq!(special.group_index, None);
+
+        let inactive = topology
+            .clients
+            .iter()
+            .find(|client| client.address == "0x3")
+            .unwrap();
+        assert!(!inactive.visible);
+        assert!(!inactive.action_ready);
+
+        let browser = topology
+            .clients
+            .iter()
+            .find(|client| client.address == "0x2")
+            .unwrap();
+        assert!(browser.fullscreen);
+        assert!(browser.grouped);
+        assert!(browser.action_ready);
+
+        let pinned = topology
+            .clients
+            .iter()
+            .find(|client| client.address == "0x4")
+            .unwrap();
+        assert!(pinned.pinned);
+        assert!(pinned.visible);
+        assert!(pinned.action_ready);
+
+        let scratch = topology
+            .clients
+            .iter()
+            .find(|client| client.address == "0x5")
+            .unwrap();
+        assert!(scratch.visible);
+        assert!(scratch.action_ready);
+
+        assert!(topology
+            .clients
+            .iter()
+            .all(|client| client.address != "0x6"));
+
+        let hidden = topology
+            .clients
+            .iter()
+            .find(|client| client.address == "0x7")
+            .unwrap();
+        assert!(hidden.hidden);
+        assert!(!hidden.action_ready);
+    }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 struct HyprlandClient {
     address: String,
     mapped: Option<bool>,
     hidden: Option<bool>,
+    visible: Option<bool>,
+    #[serde(rename = "acceptsInput")]
+    accepts_input: Option<bool>,
     at: Option<[i32; 2]>,
     size: Option<[u32; 2]>,
     workspace: Option<HyprlandWorkspace>,
+    monitor: Option<i32>,
     #[serde(rename = "class")]
     class_name: Option<String>,
     title: Option<String>,
     pid: Option<i64>,
     xwayland: Option<bool>,
+    floating: Option<bool>,
+    fullscreen: Option<i32>,
+    pinned: Option<bool>,
+    grouped: Option<Vec<String>>,
     #[serde(rename = "focusHistoryID")]
     focus_history_id: Option<i32>,
+    #[serde(rename = "stableId")]
+    stable_id: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 struct HyprlandWorkspace {
     id: Option<i32>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct HyprlandMonitorInput {
+    id: i32,
+    name: String,
+    description: Option<String>,
+    width: u32,
+    height: u32,
+    #[serde(rename = "physicalWidth")]
+    physical_width: Option<u32>,
+    #[serde(rename = "physicalHeight")]
+    physical_height: Option<u32>,
+    x: i32,
+    y: i32,
+    scale: Option<f64>,
+    transform: Option<i32>,
+    reserved: Option<[i32; 4]>,
+    #[serde(rename = "activeWorkspace")]
+    active_workspace: Option<HyprlandWorkspace>,
+    #[serde(rename = "specialWorkspace")]
+    special_workspace: Option<HyprlandWorkspace>,
+    focused: Option<bool>,
+    disabled: Option<bool>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct HyprlandWorkspaceInput {
+    id: i32,
+    name: String,
+    monitor: Option<String>,
+    windows: Option<u32>,
+    #[serde(rename = "hasfullscreen")]
+    has_fullscreen: Option<bool>,
 }
 
 impl TryFrom<HyprlandClient> for WindowInfo {
