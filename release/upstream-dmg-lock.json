@@ -1,17 +1,17 @@
 {
   "schema_version": 1,
   "approved": {
-    "upstream_app_version": "26.623.42026",
+    "upstream_app_version": "26.623.70822",
     "dmg_url": "https://persistent.oaistatic.com/codex-app-prod/Codex.dmg",
-    "sha256": "80f026121b623d3b5f317239aa202605d90c0fe0e459ec27c859ba236923cdbb",
-    "size": 529667527,
-    "etag": "0x8DED40B19F1DC95",
-    "last_modified": "Sat, 27 Jun 2026 05:15:27 GMT",
-    "approved_at": "2026-06-27T07:51:30Z",
+    "sha256": "75e670b8948d262ac8ea3ad8f61149e3d0240a04e6ca0b6bc249ac54fd83d43e",
+    "size": 529745413,
+    "etag": "0x8DED6048002F71C",
+    "last_modified": "Mon, 29 Jun 2026 17:33:14 GMT",
+    "approved_at": "2026-06-30T06:54:32Z",
     "approved_by": "manual",
-    "wrapper_min_commit": "3350c5878667599d3f1a296a40d1caf79bb76ce1",
+    "wrapper_min_commit": "344787cde5d0d2c800ceac20883f1c3f0722a12b",
     "patch_report": "patch-report.json",
-    "notes": "Passed local upstream-build validation and workstation rebuild on 2026-06-27."
+    "notes": "Passed local workstation patch validation for Codex 26.623.70822 on 2026-06-30."
   },
   "candidate": null
 }

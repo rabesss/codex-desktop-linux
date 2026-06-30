@@ -32,17 +32,17 @@ CI checks this file on every push and pull request. Scheduled/manual workflows o
 
 | Field | Value |
 | --- | --- |
-| Upstream app version | `26.623.42026` |
+| Upstream app version | `26.623.70822` |
 | DMG URL | `https://persistent.oaistatic.com/codex-app-prod/Codex.dmg` |
-| SHA-256 | `80f026121b623d3b5f317239aa202605d90c0fe0e459ec27c859ba236923cdbb` |
-| Size | `529667527` bytes |
-| ETag | `0x8DED40B19F1DC95` |
-| Last-Modified | `Sat, 27 Jun 2026 05:15:27 GMT` |
-| Approved at | `2026-06-27T07:51:30Z` |
+| SHA-256 | `75e670b8948d262ac8ea3ad8f61149e3d0240a04e6ca0b6bc249ac54fd83d43e` |
+| Size | `529745413` bytes |
+| ETag | `0x8DED6048002F71C` |
+| Last-Modified | `Mon, 29 Jun 2026 17:33:14 GMT` |
+| Approved at | `2026-06-30T06:54:32Z` |
 | Approved by | `manual` |
-| Minimum wrapper commit | `3350c5878667599d3f1a296a40d1caf79bb76ce1` |
+| Minimum wrapper commit | `344787cde5d0d2c800ceac20883f1c3f0722a12b` |
 | Patch report | `patch-report.json` |
-| Notes | Passed local upstream-build validation and workstation rebuild on 2026-06-27. |
+| Notes | Passed local workstation patch validation for Codex 26.623.70822 on 2026-06-30. |
 
 ## Candidate State
 
@@ -57,8 +57,8 @@ Nix packaging is a separate validation surface from the default updater approval
 
 | Field | Value |
 | --- | --- |
-| Nix Codex app version | `26.623.42026` |
-| Nix Codex DMG SRI hash | `sha256-gPAmEhtiPTtfMXI5qiAmBdkMD+DkWewnyFm6I2kjzbs=` |
+| Nix Codex app version | `26.623.70822` |
+| Nix Codex DMG SRI hash | `sha256-deZwuJSNJirI6jrY9hFJ49AkCgTmygtrwkmsVP2D1D4=` |
 | Nix bundled Codex CLI | `0.141.0` |
 | Nix Electron runtime | `42.1.0` |
 
