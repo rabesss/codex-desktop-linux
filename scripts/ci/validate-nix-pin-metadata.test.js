@@ -42,7 +42,9 @@ function writeFixture(root, overrides = {}) {
     dependencies: {
       electron: overrides.nativeElectron ?? "42.1.0",
       "better-sqlite3": "12.9.0",
+      "node-gyp": overrides.nativeNodeGyp ?? "^12.4.0",
       "node-pty": "1.1.0",
+      ...(overrides.extraNativeDeps ?? {}),
     },
   }, null, 2)}\n`, "utf8");
 
@@ -87,6 +89,25 @@ test("reports local metadata drift", () => {
     const failures = validate(fixture).join("\n");
     assert.match(failures, /native-modules electron pin mismatch/);
     assert.match(failures, /Codex CLI pin mismatch/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("reports native module toolchain drift", () => {
+  const root = tempDir();
+  try {
+    const fixture = writeFixture(root, {
+      nativeNodeGyp: "^12.3.0",
+      extraNativeDeps: {
+        "@electron/rebuild": "4.0.4",
+        "node-abi": "^4.31.0",
+      },
+    });
+    const failures = validate(fixture).join("\n");
+    assert.match(failures, /native-modules node-gyp pin mismatch/);
+    assert.match(failures, /native-modules @electron\/rebuild direct dependency must not be used/);
+    assert.match(failures, /native-modules node-abi direct dependency must not be used/);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

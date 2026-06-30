@@ -152,6 +152,14 @@ function validate(options) {
       failures.push(`native-modules ${dependency} pin is missing`);
     }
   }
+  if (nativeDeps["node-gyp"] !== "^12.4.0") {
+    failures.push(`native-modules node-gyp pin mismatch: expected ^12.4.0, got ${nativeDeps["node-gyp"] ?? "missing"}`);
+  }
+  for (const dependency of ["@electron/rebuild", "node-abi"]) {
+    if (Object.prototype.hasOwnProperty.call(nativeDeps, dependency)) {
+      failures.push(`native-modules ${dependency} direct dependency must not be used`);
+    }
+  }
 
   const installerCliVersion = readShellDefault(codexCliRuntime, "CODEX_BUNDLED_CODEX_CLI_VERSION");
   if (installerCliVersion !== codexCliVersion) {

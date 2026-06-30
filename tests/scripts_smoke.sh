@@ -1901,8 +1901,8 @@ PLIST
     [ "$(tail -n 1 "$output_log")" = "42.5.7" ] || fail "Expected detected Electron version 42.5.7, got: $(cat "$output_log")"
 }
 
-test_installer_keeps_electron_fallback_for_bad_metadata() {
-    info "Checking Electron version fallback for malformed metadata"
+test_installer_rejects_unknown_electron_version_for_bad_metadata() {
+    info "Checking Electron version detection fails closed for malformed metadata"
     local workspace="$TMP_DIR/electron-version-fallback"
     local app_dir="$workspace/Codex.app"
     local plist_dir="$app_dir/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources"
@@ -1920,13 +1920,21 @@ test_installer_keeps_electron_fallback_for_bad_metadata() {
 </plist>
 PLIST
 
-    CODEX_INSTALLER_SOURCE_ONLY=1 bash -c \
+    if CODEX_INSTALLER_SOURCE_ONLY=1 bash -c \
+        'source "$1"; detect_electron_version "$2"; printf "%s\n" "$ELECTRON_VERSION"' \
+        _ "$REPO_DIR/install.sh" "$app_dir" >"$output_log" 2>&1; then
+        fail "Expected malformed Electron metadata to stop the installer"
+    fi
+
+    assert_contains "$output_log" "Ignoring invalid Electron version from DMG: not-a-version"
+    assert_contains "$output_log" "Could not auto-detect Electron version; refusing to rebuild native modules against an unknown ABI"
+
+    CODEX_INSTALLER_SOURCE_ONLY=1 CODEX_ELECTRON_VERSION=42.1.0 bash -c \
         'source "$1"; detect_electron_version "$2"; printf "%s\n" "$ELECTRON_VERSION"' \
         _ "$REPO_DIR/install.sh" "$app_dir" >"$output_log" 2>&1
 
-    assert_contains "$output_log" "Ignoring invalid Electron version from DMG: not-a-version"
-    assert_contains "$output_log" "Could not auto-detect Electron version; using fallback 41.3.0"
-    [ "$(tail -n 1 "$output_log")" = "41.3.0" ] || fail "Expected fallback Electron version 41.3.0, got: $(cat "$output_log")"
+    assert_contains "$output_log" "Could not auto-detect Electron version; using explicit CODEX_ELECTRON_VERSION=42.1.0"
+    [ "$(tail -n 1 "$output_log")" = "42.1.0" ] || fail "Expected explicit Electron version 42.1.0, got: $(cat "$output_log")"
 }
 
 test_installer_normalizes_relative_linux_features_config() {
@@ -2846,6 +2854,12 @@ SCRIPT
     assert_contains "$REPO_DIR/scripts/lib/native-modules.sh" "assert_native_module_build_output"
     assert_not_contains "$REPO_DIR/scripts/lib/native-modules.sh" "@electron/rebuild"
     assert_not_contains "$REPO_DIR/scripts/lib/native-modules.sh" "node-abi"
+    assert_contains "$REPO_DIR/flake.nix" 'node_modules/node-gyp/bin/node-gyp.js'
+    assert_contains "$REPO_DIR/flake.nix" '--nodedir="$TMPDIR/electron-headers"'
+    assert_not_contains "$REPO_DIR/flake.nix" "@electron/rebuild/lib/cli.js"
+    assert_contains "$REPO_DIR/nix/native-modules/package.json" '"node-gyp": "^12.4.0"'
+    assert_not_contains "$REPO_DIR/nix/native-modules/package.json" "@electron/rebuild"
+    assert_not_contains "$REPO_DIR/nix/native-modules/package.json" "node-abi"
     assert_contains "$REPO_DIR/scripts/lib/native-modules.sh" "prune_native_module_build_artifacts"
     assert_contains "$REPO_DIR/scripts/lib/native-modules.sh" 'find "$build_dir" -type f ! -name'
     assert_contains "$REPO_DIR/scripts/lib/native-modules.sh" 'find "$module_dir" -type f -name'
@@ -6089,7 +6103,7 @@ main() {
     test_upstream_build_app_workflow_tracks_dmg_metadata
     test_support_metadata_workflows_are_resilient
     test_installer_detects_electron_version_from_plist
-    test_installer_keeps_electron_fallback_for_bad_metadata
+    test_installer_rejects_unknown_electron_version_for_bad_metadata
     test_installer_normalizes_relative_linux_features_config
     test_port_validation_rejects_oversized_numeric_values
     test_managed_node_runtime_source_install

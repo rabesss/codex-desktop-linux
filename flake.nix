@@ -234,8 +234,6 @@
             export ARCH="${pkgs.stdenv.hostPlatform.uname.processor}"
             export ELECTRON_VERSION=${electronVersion}
             export MIN_BETTER_SQLITE3_VERSION_FOR_ELECTRON_41="12.9.0"
-            export npm_config_nodedir="$TMPDIR/electron-headers"
-            export NPM_CONFIG_NODEDIR="$TMPDIR/electron-headers"
 
             # Reuse the installer's Electron 42 source compatibility patch without
             # sourcing install-helpers.sh, which owns the top-level installer traps.
@@ -246,11 +244,36 @@
             patch_better_sqlite3_for_v8_external_pointer_api "$PWD/node_modules/better-sqlite3"
             apply_v8_nullptr_t_workaround_if_needed "$TMPDIR/native-nullptr-workaround"
 
-            node "$PWD/node_modules/@electron/rebuild/lib/cli.js" \
-              -v ${electronVersion} \
-              --force \
-              --module-dir "$PWD" \
-              --dist-url "file://$TMPDIR/electron-headers"
+            build_root="$PWD"
+            node_gyp_cli="$build_root/node_modules/node-gyp/bin/node-gyp.js"
+            [ -f "$node_gyp_cli" ] || error "node-gyp CLI not found in Nix native module toolchain"
+            build_one_native_module() {
+              module_dir="$1"
+              output_path="$2"
+              label="$3"
+              (
+                cd "$module_dir"
+                MAKEFLAGS="-j''${NIX_BUILD_CORES:-1}"
+                export MAKEFLAGS
+                node "$node_gyp_cli" \
+                  rebuild \
+                  --release \
+                  --target=${electronVersion} \
+                  --nodedir="$TMPDIR/electron-headers" \
+                  --verbose \
+                  --jobs "''${NIX_BUILD_CORES:-1}"
+              )
+              assert_native_module_build_output "$output_path" "$label"
+            }
+
+            build_one_native_module \
+              "$build_root/node_modules/better-sqlite3" \
+              "$build_root/node_modules/better-sqlite3/build/Release/better_sqlite3.node" \
+              "better-sqlite3"
+            build_one_native_module \
+              "$build_root/node_modules/node-pty" \
+              "$build_root/node_modules/node-pty/build/Release/pty.node" \
+              "node-pty"
 
             runHook postBuild
           '';

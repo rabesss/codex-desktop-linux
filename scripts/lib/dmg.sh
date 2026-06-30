@@ -327,6 +327,14 @@ process.stdout.write(String(pkg.devDependencies?.electron ?? pkg.dependencies?.e
         fi
     fi
 
-    warn "Could not auto-detect Electron version; using fallback $ELECTRON_VERSION"
-    return 0
+    if [ -n "$ELECTRON_VERSION" ]; then
+        if detected_version=$(sanitize_electron_version "$ELECTRON_VERSION"); then
+            ELECTRON_VERSION="$detected_version"
+            warn "Could not auto-detect Electron version; using explicit CODEX_ELECTRON_VERSION=$ELECTRON_VERSION"
+            return 0
+        fi
+        error "Invalid CODEX_ELECTRON_VERSION: $ELECTRON_VERSION"
+    fi
+
+    error "Could not auto-detect Electron version; refusing to rebuild native modules against an unknown ABI"
 }
