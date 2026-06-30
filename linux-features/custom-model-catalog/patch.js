@@ -89,7 +89,7 @@ const ROUTING_HELPER_SOURCE = [
 ].join("");
 const ROUTING_INSERTION_VARIANTS = ["var kg=5e3,Ag=class{", "var Qg=5e3,$g=class{", "WR=5e3,GR=class{"];
 const ROUTING_INSERTION_REGEX =
-  /var [A-Za-z_$][\w$]*=5e3,[A-Za-z_$][\w$]*=class\{dynamicToolsForThreadStartRequests=/u;
+  /(?:var )?[A-Za-z_$][\w$]*=5e3,[A-Za-z_$][\w$]*=class\{dynamicToolsForThreadStartRequests=/u;
 const ROUTING_NEEDLE_VARIANTS = [
   "let c=await en(e,await VI(t,()=>this.params.requestClient.sendRequest(`configRequirements/read`,void 0,{timeoutMs:M_})),()=>this.params.fetchFromHost(`get-copilot-api-proxy-info`),n,r,()=>this.buildThreadCodexConfig(n),o,i,{baseInstructions:s?.baseInstructions,threadSource:s?.threadSource});if(c=ct(c,a),",
   "let c=await C(e,t,()=>this.params.fetchFromHost(`get-copilot-api-proxy-info`),n,r,()=>this.buildThreadCodexConfig(n),o,i,{persistExtendedHistory:s?.persistExtendedHistory??!1,threadSource:s?.threadSource});if(c=ae(c,a),",
@@ -107,6 +107,8 @@ const ROUTING_NEEDLE = ROUTING_NEEDLE_VARIANTS[0];
 const ROUTING_PATCH = ROUTING_PATCH_VARIANTS[0];
 const ROUTING_NEEDLE_REGEX =
   /let ([A-Za-z_$][\w$]*)=await ([A-Za-z_$][\w$]*)\(e,t,\(\)=>this\.params\.fetchFromHost\(`get-copilot-api-proxy-info`\),n,r,\(\)=>this\.buildThreadCodexConfig\(n\),o,i,(\{(?:persistExtendedHistory:s\?\.persistExtendedHistory\?\?!1,)?threadSource:s\?\.threadSource\})\);if\(\1=([A-Za-z_$][\w$]*)\(\1,a\),/u;
+const ROUTING_REQUIREMENTS_NEEDLE_REGEX =
+  /let ([A-Za-z_$][\w$]*)=await [A-Za-z_$][\w$]*\(e,await [A-Za-z_$][\w$]*\(t,\(\)=>this\.params\.requestClient\.sendRequest\(`configRequirements\/read`,void 0,\{timeoutMs:[A-Za-z_$][\w$]*\}\)\),\(\)=>this\.params\.fetchFromHost\(`get-copilot-api-proxy-info`\),n,r,\(\)=>this\.buildThreadCodexConfig\(n\),o,i,\{baseInstructions:s\?\.baseInstructions,threadSource:s\?\.threadSource\}\);if\(\1=[A-Za-z_$][\w$]*\(\1,a\),/u;
 const CREATE_CONVERSATION_ROUTING_REGEX =
   /(threadCreation\.createConversation\(\{[\s\S]{0,1600}?collaborationMode:([A-Za-z_$][\w$]*)[\s\S]{0,1600}?config:)([A-Za-z_$][\w$]*)(,projectAssignment:)/u;
 const CREATE_CONVERSATION_ROUTING_PATCHED_REGEX =
@@ -175,6 +177,10 @@ const MODEL_PROVIDER_GROUP_CURRENT_NEEDLE =
   "fe=a?.map(e=>(0,DY.jsx)(Hut,{modelOption:e,selectedModel:i,selectedReasoningEffort:h,selectedServiceTier:E,selectedServiceTierIconKind:D,onSelect:(e,t)=>{d(e,t),M||u?.()}},e.model)),";
 const MODEL_PROVIDER_GROUP_CURRENT_PATCH =
   "fe=codexLinuxCustomModelGroupModelOptions(a,e=>(0,DY.jsx)(Hut,{modelOption:e,selectedModel:i,selectedReasoningEffort:h,selectedServiceTier:E,selectedServiceTierIconKind:D,onSelect:(e,t)=>{d(e,t),M||u?.()}},e.model),DY,Zf),";
+const MODEL_PROVIDER_GROUP_DYNAMIC_PATCH_REGEX =
+  /[A-Za-z_$][\w$]*=codexLinuxCustomModelGroupModelOptions\(/u;
+const MODEL_PROVIDER_GROUP_DYNAMIC_MAP_REGEX =
+  /([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\?\.map\(([A-Za-z_$][\w$]*)=>\(0,([A-Za-z_$][\w$]*)\.jsx\)\(([A-Za-z_$][\w$]*),\{modelOption:\3,selectedModel:([A-Za-z_$][\w$]*),selectedReasoningEffort:([A-Za-z_$][\w$]*),selectedServiceTier:([A-Za-z_$][\w$]*),selectedServiceTierIconKind:([A-Za-z_$][\w$]*),onSelect:\([^)]*\)=>\{[^{}]*\}\},\3\.model\)\)/u;
 const COMPOSER_ATTACHMENT_PROP_NEEDLE =
   "onOpenGoalEditor:_c,supportsFileAttachments:ui!==`cloud`||!bi&&Ti===`local`,supportsRemoteFileAttachments:ui!==`cloud`&&Ti!==`local`});";
 const COMPOSER_ATTACHMENT_PROP_PATCH =
@@ -398,7 +404,8 @@ function applyCustomModelRoutingPatch(source) {
   if (!insertionApplied && !patched.includes(ROUTING_HELPER_NAME)) {
     const insertionMatch = patched.match(ROUTING_INSERTION_REGEX);
     if (insertionMatch != null) {
-      patched = patched.replace(insertionMatch[0], `${ROUTING_HELPER_SOURCE}${insertionMatch[0]}`);
+      const helperPrefix = insertionMatch[0].startsWith("var ") ? "" : "void 0;";
+      patched = patched.replace(insertionMatch[0], `${helperPrefix}${ROUTING_HELPER_SOURCE}${insertionMatch[0]}`);
       insertionApplied = true;
     }
   }
@@ -429,6 +436,17 @@ function applyCustomModelRoutingPatch(source) {
       patched = patched.replace(
         routingMatch[0],
         `let ${routingMatch[1]}=await ${routingMatch[2]}(e,t,()=>this.params.fetchFromHost(\`get-copilot-api-proxy-info\`),n,r,()=>this.buildThreadCodexConfig(n),o,i,${routingMatch[3]});if(${routingMatch[1]}=codexLinuxCustomModelApplyRouting(${routingMatch[1]},e),${routingMatch[1]}=${routingMatch[4]}(${routingMatch[1]},a),`,
+      );
+      routingApplied = true;
+    }
+  }
+  if (!routingApplied) {
+    const routingMatch = patched.match(ROUTING_REQUIREMENTS_NEEDLE_REGEX);
+    if (routingMatch != null) {
+      patched = patched.replace(
+        ROUTING_REQUIREMENTS_NEEDLE_REGEX,
+        (needle, paramsVar) =>
+          needle.replace(`if(${paramsVar}=`, `if(${paramsVar}=codexLinuxCustomModelApplyRouting(${paramsVar},e),${paramsVar}=`),
       );
       routingApplied = true;
     }
@@ -746,14 +764,41 @@ function applyCustomModelTooltipPatch(source) {
   );
 }
 
+function escapeRegExpLiteral(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function detectCustomModelProviderGroupMenuObject(source, jsxRuntime, beforeIndex) {
+  const prefix = source.slice(0, beforeIndex);
+  const jsx = escapeRegExpLiteral(jsxRuntime);
+  const titleRegex = new RegExp(
+    String.raw`\(0,${jsx}\.jsx\)\(([A-Za-z_$][\w$]*)\.Title,\{children:[\s\S]{0,500}?composer\.intelligenceDropdown\.model\.title`,
+    "gu",
+  );
+  let menuObject = null;
+  for (const match of prefix.matchAll(titleRegex)) {
+    menuObject = match[1];
+  }
+  return menuObject;
+}
+
 function applyCustomModelProviderGroupPatch(source) {
   if (
     source.includes(MODEL_PROVIDER_GROUP_HELPER_NAME) &&
-    (source.includes(MODEL_PROVIDER_GROUP_PATCH) || source.includes(MODEL_PROVIDER_GROUP_CURRENT_PATCH))
+    (
+      source.includes(MODEL_PROVIDER_GROUP_PATCH) ||
+      source.includes(MODEL_PROVIDER_GROUP_CURRENT_PATCH) ||
+      MODEL_PROVIDER_GROUP_DYNAMIC_PATCH_REGEX.test(source)
+    )
   ) {
     return source;
   }
-  if (!source.includes(MODEL_PROVIDER_GROUP_NEEDLE) && !source.includes(MODEL_PROVIDER_GROUP_CURRENT_NEEDLE)) {
+  const dynamicMatch = source.match(MODEL_PROVIDER_GROUP_DYNAMIC_MAP_REGEX);
+  if (
+    !source.includes(MODEL_PROVIDER_GROUP_NEEDLE) &&
+    !source.includes(MODEL_PROVIDER_GROUP_CURRENT_NEEDLE) &&
+    dynamicMatch == null
+  ) {
     throw new Error("Required custom model catalog patch failed: model provider grouping needle not found");
   }
   const insertionMatch = source.match(MODEL_PROVIDER_GROUP_INSERTION_REGEX);
@@ -768,9 +813,22 @@ function applyCustomModelProviderGroupPatch(source) {
     ? MODEL_PROVIDER_GROUP_CURRENT_PATCH
     : MODEL_PROVIDER_GROUP_PATCH;
 
-  return source
-    .replace(insertionMatch[0], `${MODEL_PROVIDER_GROUP_HELPER_SOURCE}${insertionMatch[0]}`)
-    .replace(needle, patch);
+  const patched = source.replace(insertionMatch[0], `${MODEL_PROVIDER_GROUP_HELPER_SOURCE}${insertionMatch[0]}`);
+  if (source.includes(needle)) {
+    return patched.replace(needle, patch);
+  }
+
+  const [dynamicNeedle, targetVar, modelsVar, , jsxRuntime] = dynamicMatch;
+  const menuObject = detectCustomModelProviderGroupMenuObject(source, jsxRuntime, dynamicMatch.index);
+  if (menuObject == null) {
+    throw new Error("Required custom model catalog patch failed: model provider grouping menu object not found");
+  }
+  const mapPrefix = `${targetVar}=${modelsVar}?.map(`;
+  const callbackSource = dynamicNeedle.slice(mapPrefix.length, -1);
+  return patched.replace(
+    dynamicNeedle,
+    `${targetVar}=codexLinuxCustomModelGroupModelOptions(${modelsVar},${callbackSource},${jsxRuntime},${menuObject})`,
+  );
 }
 
 function applyCustomModelComposerAttachmentPropPatch(source) {
@@ -778,7 +836,8 @@ function applyCustomModelComposerAttachmentPropPatch(source) {
     source.includes(COMPOSER_ATTACHMENT_PROP_PATCH) ||
     /onOpenGoalEditor:[A-Za-z_$][\w$]*,supportsImageInputs:[A-Za-z_$][\w$]*,supportsFileAttachments:/u.test(source) ||
     /[A-Za-z_$][\w$]*=Qy\(\{[^{}]{0,1200}?setFileAttachments:[A-Za-z_$][\w$]*,supportsImageInputs:[A-Za-z_$][\w$]*,supportsFileAttachments:/u.test(source) ||
-    /[A-Za-z_$][\w$]*=lU\(\{[^{}]{0,1800}?setFileAttachments:[A-Za-z_$][\w$]*,supportsImageInputs:[A-Za-z_$][\w$]*,supportsFileAttachments:/u.test(source)
+    /[A-Za-z_$][\w$]*=lU\(\{[^{}]{0,1800}?setFileAttachments:[A-Za-z_$][\w$]*,supportsImageInputs:[A-Za-z_$][\w$]*,supportsFileAttachments:/u.test(source) ||
+    /[A-Za-z_$][\w$]*=sq\(\{[^{}]{0,2200}?setFileAttachments:[A-Za-z_$][\w$]*,supportsImageInputs:[A-Za-z_$][\w$]*,supportsFileAttachments:/u.test(source)
   ) {
     return source;
   }
@@ -803,6 +862,15 @@ function applyCustomModelComposerAttachmentPropPatch(source) {
     return source.replace(
       currentAttachmentMenuMatch[0],
       `${currentAttachmentMenuMatch[1]}supportsImageInputs:${capabilityMatch[1]},${currentAttachmentMenuMatch[2]}`,
+    );
+  }
+  const electron421AttachmentMenuMatch = source.match(
+    /([A-Za-z_$][\w$]*=sq\(\{[^{}]{0,2200}?setFileAttachments:[A-Za-z_$][\w$]*,)(supportsFileAttachments:)/u,
+  );
+  if (capabilityMatch != null && electron421AttachmentMenuMatch != null) {
+    return source.replace(
+      electron421AttachmentMenuMatch[0],
+      `${electron421AttachmentMenuMatch[1]}supportsImageInputs:${capabilityMatch[1]},${electron421AttachmentMenuMatch[2]}`,
     );
   }
   const propMatch = source.match(COMPOSER_ATTACHMENT_PROP_REGEX);
@@ -1006,7 +1074,7 @@ const MODEL_PICKER_ASSET_PATTERN =
 const MODEL_QUERY_ASSET_PATTERN =
   /^(?:model-queries-.*|app-initial~app-main~onboarding-page-[A-Za-z0-9_-]+)\.js$/;
 const ROUTING_ASSET_PATTERN =
-  /^(?:thread-context-inputs-.*|app-initial~app-main~worktree-init-v2-page~remote-conversation-page~new-thread-panel-page~o~[A-Za-z0-9_-]+)\.js$/;
+  /^(?:thread-context-inputs-.*|app-initial~app-main~worktree-init-v2-page~remote-conversation-page~new-thread-panel-page~o~[A-Za-z0-9_-]+|app-initial~app-main~remote-conversation-page~new-thread-panel-page~projects-index-page~app~[A-Za-z0-9_-]+)\.js$/;
 const MODEL_DROPDOWN_ASSET_PATTERN =
   /^(?:model-and-reasoning-dropdown-[A-Za-z0-9_-]+|app-initial~app-main~onboarding-page-[A-Za-z0-9_-]+)\.js$/;
 const COMPOSER_ASSET_PATTERN =

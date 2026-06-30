@@ -238,6 +238,14 @@ function modelDropdownBundleFixture() {
   ].join("");
 }
 
+function currentModelDropdownBundleFixture() {
+  return [
+    "function cG(e){let t=(0,fG.c)(47),{align:n,disabled:r,model:i,models:a,onSelectComplete:u,onSelectModel:d,reasoningEffort:h,selectedServiceTier:E,selectedServiceTierIconKind:D,showReasoningEffortSlider:M}=e,q;",
+    "t[11]===Symbol.for(`react.memo_cache_sentinel`)?(q=(0,mG.jsx)(ks.Title,{children:(0,mG.jsx)($,{id:`composer.intelligenceDropdown.model.title`,defaultMessage:`Model`,description:`Header label above model options in the intelligence dropdown`})}),t[11]=q):q=t[11];",
+    "let he;t[12]!==i||t[13]!==a||t[14]!==u||t[15]!==d||t[16]!==h||t[17]!==E||t[18]!==D||t[19]!==M?(he=a?.map(e=>(0,mG.jsx)(Bze,{modelOption:e,selectedModel:i,selectedReasoningEffort:h,selectedServiceTier:E,selectedServiceTierIconKind:D,onSelect:(e,t)=>{d(e,t),M||u?.()}},e.model)),t[12]=i,t[13]=a,t[14]=u,t[15]=d,t[16]=h,t[17]=E,t[18]=D,t[19]=M,t[20]=he):he=t[20];return he}",
+  ].join("");
+}
+
 test("model picker visibility patch removes the upstream provider allowlist gate", () => {
   const source = "before function e(){let a=[],o=null,s=i&&e!==`amazonBedrock`;return s} after";
   const patched = applyPatchTwice(applyCustomModelPickerVisibilityPatch, source);
@@ -1427,6 +1435,17 @@ test("model provider grouping patch wraps the current model option map", () => {
   assert.doesNotMatch(patched, /Y=c\?\.map\(e=>/);
 });
 
+test("model provider grouping patch wraps the Electron 42.1.0 model option map", () => {
+  const patched = applyPatchTwice(applyCustomModelProviderGroupPatch, currentModelDropdownBundleFixture());
+
+  assert.match(patched, /function codexLinuxCustomModelGroupModelOptions/);
+  assert.match(
+    patched,
+    /he=codexLinuxCustomModelGroupModelOptions\(a,e=>\(0,mG\.jsx\)\(Bze,\{modelOption:e,selectedModel:i,selectedReasoningEffort:h,selectedServiceTier:E,selectedServiceTierIconKind:D,onSelect:\(e,t\)=>\{d\(e,t\),M\|\|u\?\.\(\)\}\},e\.model\),mG,ks\)/,
+  );
+  assert.doesNotMatch(patched, /he=a\?\.map\(e=>/);
+});
+
 test("model provider grouping patch fails loudly when the upstream needle drifts", () => {
   assert.throws(
     () => applyCustomModelProviderGroupPatch("function E(e){let t=(0,w.c)(76),{align:r}=e;return null}"),
@@ -1472,6 +1491,15 @@ test("recent thread patch preserves current upstream state-db options", () => {
 
   assert.match(patched, /modelProviders:\[\],archived:!1,sourceKinds:Ue,useStateDbOnly:n/);
   assert.match(patched, /useStateDbOnly:n=!1/);
+});
+
+test("recent thread patch preserves current upstream request params objects", () => {
+  const source =
+    "listRecentThreads({cursor:e,limit:t,useStateDbOnly:n=!1}){let r={limit:t,cursor:e,sortKey:this.params.requestClient.getCompatibleThreadSortKey(this.recentConversationSortKey),modelProviders:null,archived:!1,sourceKinds:Ae,useStateDbOnly:n};return this.params.requestClient.sendRequest(`thread/list`,r)}";
+  const patched = applyPatchTwice(applyCustomModelRecentThreadsPatch, source);
+
+  assert.match(patched, /modelProviders:\[\],archived:!1,sourceKinds:Ae,useStateDbOnly:n/);
+  assert.match(patched, /getCompatibleThreadSortKey\(this\.recentConversationSortKey\)/);
 });
 
 test("start conversation routing helper routes only catalog-registered slugs with explicit providers", () => {
@@ -1686,6 +1714,19 @@ test("start conversation routing patch supports Electron 42 base instructions", 
   assert.match(patched, /codexLinuxCustomModelApplyRouting\(c,e\),c=yt\(c,a\)/);
 });
 
+test("start conversation routing patch supports Electron 42.1.0 config requirements", () => {
+  const source = [
+    "var $B,eV,fie=e((()=>{QB(),$B=5e3,eV=class{dynamicToolsForThreadStartRequests=new Map;",
+    "async buildNewConversationParams(e,t,n,r,i,a,o,s){let c=await Zt(e,await uR(t,()=>this.params.requestClient.sendRequest(`configRequirements/read`,void 0,{timeoutMs:Gd})),()=>this.params.fetchFromHost(`get-copilot-api-proxy-info`),n,r,()=>this.buildThreadCodexConfig(n),o,i,{baseInstructions:s?.baseInstructions,threadSource:s?.threadSource});if(c=at(c,a),c=await oie(this.params.fetchFromHost,this.params.requestClient,c,n))return c}",
+    "}}));",
+  ].join("");
+  const patched = applyPatchTwice(applyCustomModelRoutingPatch, source);
+
+  assert.match(patched, /QB\(\),void 0;function codexLinuxCustomModelSlugKey/);
+  assert.match(patched, /codexLinuxCustomModelApplyRouting\(c,e\),c=at\(c,a\)/);
+  assert.doesNotThrow(() => new Function(patched));
+});
+
 test("start conversation routing patch keeps assignment anchors parseable inside comma initializers", () => {
   const source = [
     "var WR,GR,nhe=e((()=>{qN(),UR(),WR=5e3,GR=class{dynamicToolsForThreadStartRequests=new Map;",
@@ -1766,6 +1807,23 @@ test("fork conversation routing preserves Electron 42 thread source", () => {
 
   assert.match(patched, /threadSource:d/);
   assert.match(patched, /f\?\.latestModel\?\?f\?\.latestCollaborationMode\?\.settings\?\.model/);
+  assert.match(patched, /\.\.\.p\.config==null\?\{\}:\{config:p\.config\}/);
+});
+
+test("fork conversation routing preserves current upstream inline config payloads", () => {
+  const source = [
+    ROUTING_HELPER_SOURCE,
+    "async function PH(e,{sourceConversationId:t,rolloutPath:n,cwd:r,collaborationMode:a,developerInstructions:s,threadSource:d=`user`}){",
+    "let f=e.getConversation(t);",
+    "let p=await e.buildThreadCodexConfig(r??f?.cwd??null),h=await e.sendRequest(`thread/fork`,{threadId:t,path:n??null,cwd:r,threadSource:d,config:p??void 0,developerInstructions:s});",
+    "return h",
+    "}",
+  ].join("");
+  const patched = applyPatchTwice(applyCustomModelForkRoutingPatch, source);
+
+  assert.match(patched, /threadSource:d/);
+  assert.match(patched, /f\?\.latestModel\?\?f\?\.latestCollaborationMode\?\.settings\?\.model/);
+  assert.match(patched, /\.\.\.p\.modelProvider==null\?\{\}:\{modelProvider:p\.modelProvider\}/);
   assert.match(patched, /\.\.\.p\.config==null\?\{\}:\{config:p\.config\}/);
 });
 
@@ -2103,6 +2161,10 @@ test("Electron 42 descriptors target split routing and dropdown chunks", () => {
   assert.ok(routing);
   assert.ok(tooltip);
   assert.match("thread-context-inputs-D5uMjcUB.js", routing.pattern);
+  assert.match(
+    "app-initial~app-main~remote-conversation-page~new-thread-panel-page~projects-index-page~app~iy8s9c2d-BUvvfhQQ.js",
+    routing.pattern,
+  );
   assert.match("model-and-reasoning-dropdown-DLlEnLde.js", tooltip.pattern);
 });
 
@@ -2157,6 +2219,16 @@ test("composer attachment prop patch supports the Electron 42 context menu", () 
   const patched = applyPatchTwice(applyCustomModelComposerAttachmentPropPatch, source);
 
   assert.match(patched, /setFileAttachments:ha,supportsImageInputs:Gt,supportsFileAttachments:/);
+});
+
+test("composer attachment prop patch supports the Electron 42.1.0 context menu", () => {
+  const source = [
+    "let{imageInputUnsupportedReason:xt,notifyImageInputUnsupported:St,supportsImageInputs:Ct}=sA({scope:I,conversationId:H,intl:lt});",
+    "fc=sq({executionTargetCwd:G.cwd,executionTargetHostId:jr,getAppshotCaptureAnimationDestinationFrame:Xi,getAttachmentGen:ic,onAddAppshotContext:nc,onAddImageDataUrls:Sa,onAddLocalFileAttachments:Ta,onAppshotCaptureAnimationDuration:Qi,onAppshotCaptureSettled:ea,onAppshotCaptureStarted:ta,onPickBrowserFiles:void 0,setFileAttachments:Bi,supportsFileAttachments:vr!==`cloud`||!Er&&jr===`local`,supportsRemoteFileAttachments:vr!==`cloud`&&jr!==`local`})",
+  ].join("");
+  const patched = applyPatchTwice(applyCustomModelComposerAttachmentPropPatch, source);
+
+  assert.match(patched, /setFileAttachments:Bi,supportsImageInputs:Ct,supportsFileAttachments:/);
 });
 
 test("attachment menu patch hides image affordances for text-only models", () => {
