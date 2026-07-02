@@ -74,6 +74,29 @@ codex-update-manager status
 codex-update-manager install-ready
 ```
 
+## Version And SHA Labels
+
+The updater and Linux UI intentionally expose separate identifiers for the two
+update channels:
+
+- `source.commit` / `source.shortCommit` in
+  `/opt/codex-desktop/resources/codex-linux-build-info.json` identify the
+  installed Linux wrapper commit from this repository. When the optional wrapper
+  updater feature is built, the small in-app `sha <short>` chip displays this
+  wrapper commit.
+- `upstreamDmg.appVersion` and `upstreamDmg.sha256` identify the official
+  upstream Codex Desktop DMG that was converted into the Linux package.
+- `installed_wrapper_commit` in `codex-update-manager status --json` should
+  match the installed build metadata. `dmg_sha256` should match the approved
+  upstream DMG pin used for that installed package.
+
+Use this when an install looks stale:
+
+```bash
+sed -n '1,160p' /opt/codex-desktop/resources/codex-linux-build-info.json
+codex-update-manager status --json
+```
+
 `install-ready` does not overwrite a running app. It records that installation
 should continue after Codex Desktop exits.
 

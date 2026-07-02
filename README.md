@@ -62,6 +62,20 @@ codex-update-manager status
 codex-update-manager status --json
 ```
 
+The Linux build can expose two different revision identifiers:
+
+- The in-app `sha <short>` chip is the installed Linux wrapper/source commit
+  from this repository.
+- The upstream Codex Desktop app pin is identified separately by upstream app
+  version plus the official DMG SHA256.
+
+To compare both, inspect the installed build metadata:
+
+```bash
+sed -n '1,160p' /opt/codex-desktop/resources/codex-linux-build-info.json
+codex-update-manager status --json
+```
+
 When an approved upstream app update exists, the updater rebuilds a local native
 package from the approved DMG pin. If OpenAI publishes a newer DMG before this
 repo approves it, the updater may report a candidate, but the default update

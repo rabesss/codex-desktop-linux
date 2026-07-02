@@ -60,9 +60,12 @@ features the rebuild stages.
 
 ## Toolbar states
 
-- A **SHA chip** shows the installed short commit when build metadata is
-  available (a git-ref-style pill, e.g. `5fcfea9`), so you can see which build
-  is running.
+- A **SHA chip** shows the installed Linux wrapper/source short commit when
+  build metadata is available (a git-ref-style pill, e.g. `5fcfea9`), so you
+  can see which wrapper build is running. It is not the official upstream DMG
+  SHA256; compare `source.shortCommit` with `upstreamDmg.sha256` in
+  `/opt/codex-desktop/resources/codex-linux-build-info.json` when checking both
+  channels.
 - The action chip is color-coded:
   - **green Update** means a genuinely newer upstream build is available.
   - **amber dev mode** (non-clickable) means the installed build appears to be
