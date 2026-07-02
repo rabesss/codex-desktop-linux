@@ -93,8 +93,20 @@ pub struct ActionInvocation {
 
 #[derive(Debug, Clone)]
 pub enum ValueSetInvocation {
-    Numeric { value: f64 },
-    EditableText,
+    Numeric {
+        value: f64,
+        readback: ElementValueReadback,
+    },
+    EditableText {
+        readback: ElementValueReadback,
+    },
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ElementValueReadback {
+    pub numeric_value: Option<f64>,
+    pub value_text: Option<String>,
+    pub text_content: Option<String>,
 }
 
 const MAX_TEXT_READBACK_CHARS: i32 = 4096;
@@ -207,6 +219,8 @@ pub async fn set_element_value(object_ref_id: &str, value: &str) -> Result<Value
                 })?;
             return Ok(ValueSetInvocation::Numeric {
                 value: numeric_value,
+                readback: value_readback(proxies.value().await.ok(), proxies.text().await.ok())
+                    .await,
             });
         }
     }
@@ -217,7 +231,10 @@ pub async fn set_element_value(object_ref_id: &str, value: &str) -> Result<Value
             .await
             .context("failed to set AT-SPI editable text contents")?;
         if ok {
-            return Ok(ValueSetInvocation::EditableText);
+            return Ok(ValueSetInvocation::EditableText {
+                readback: value_readback(proxies.value().await.ok(), proxies.text().await.ok())
+                    .await,
+            });
         }
         return Err(anyhow!("AT-SPI EditableText rejected the new contents"));
     }
@@ -231,6 +248,25 @@ pub async fn set_element_value(object_ref_id: &str, value: &str) -> Result<Value
     Err(anyhow!(
         "element does not expose AT-SPI Value or EditableText interfaces"
     ))
+}
+
+async fn value_readback(
+    value: Option<atspi::proxy::value::ValueProxy<'_>>,
+    text: Option<atspi::proxy::text::TextProxy<'_>>,
+) -> ElementValueReadback {
+    let mut readback = ElementValueReadback::default();
+    if let Some(value) = value {
+        readback.numeric_value = value.current_value().await.ok();
+        readback.value_text = optional_string(value.text().await.ok());
+    }
+    if let Some(text) = text {
+        let character_count = text.character_count().await.unwrap_or_default().max(0);
+        let capped_count = character_count.min(MAX_TEXT_READBACK_CHARS);
+        if capped_count > 0 {
+            readback.text_content = optional_string(text.get_text(0, capped_count).await.ok());
+        }
+    }
+    readback
 }
 
 async fn connect() -> Result<AccessibilityConnection> {

@@ -1,7 +1,7 @@
 use crate::atspi_tree::{
     list_accessible_apps, perform_action as invoke_accessibility_action, set_element_value,
     snapshot_tree, AccessibilityAction, AccessibilityNode, AccessibleAppSummary, Bounds,
-    ValueSetInvocation,
+    ElementValueReadback, ValueSetInvocation,
 };
 use crate::diagnostics::{doctor_report, setup_accessibility_report, DoctorReport, SetupReport};
 use crate::gnome_extension::{setup_window_targeting_report, WindowTargetingSetupReport};
@@ -57,6 +57,10 @@ struct ScreenshotContext {
     origin_y: i32,
     width: u32,
     height: u32,
+    coordinate_width: u32,
+    coordinate_height: u32,
+    scale: f32,
+    coordinate_space: Option<String>,
     target_window_id: Option<u64>,
 }
 
@@ -498,11 +502,22 @@ impl ComputerUseLinux {
     )]
     async fn click(&self, Parameters(params): Parameters<ClickParams>) -> Json<ActionOutput> {
         let received = Some(serde_json::json!(params));
+        let explicit_window_target = params.window_target();
         let target = match self.resolve_click_target(&params) {
             Ok(target) => target,
             Err(message) => {
                 return Json(action_not_sent("click", message, received));
             }
+        };
+        let explicit_focus = if explicit_window_target.has_target() {
+            match self.focus_target_for_input(&explicit_window_target).await {
+                Ok(focus) => focus,
+                Err(message) => {
+                    return Json(action_not_sent_targeting_failed("click", message, received));
+                }
+            }
+        } else {
+            None
         };
         if let ClickTarget::PrimaryAction {
             object_ref,
@@ -510,31 +525,34 @@ impl ComputerUseLinux {
         } = target
         {
             return match invoke_accessibility_action(&object_ref, Some("0")).await {
-                Ok(invocation) => Json(action_invocation_result(
-                    "click",
-                    invocation.ok,
-                    if invocation.ok {
-                        format!(
-                            "No clickable bounds were cached, so I invoked the primary AT-SPI action{}.",
-                            action_name
-                                .as_deref()
-                                .filter(|name| !name.is_empty())
-                                .map(|name| format!(" ({name})"))
-                                .unwrap_or_default()
-                        )
-                    } else {
-                        format!(
-                            "The primary AT-SPI action{} returned false.",
-                            action_name
-                                .as_deref()
-                                .filter(|name| !name.is_empty())
-                                .map(|name| format!(" ({name})"))
-                                .unwrap_or_default()
-                        )
-                    },
-                    received,
-                    "at-spi",
-                )),
+                Ok(invocation) => {
+                    let output = action_invocation_result(
+                        "click",
+                        invocation.ok,
+                        if invocation.ok {
+                            format!(
+                                "No clickable bounds were cached, so I invoked the primary AT-SPI action{}.",
+                                action_name
+                                    .as_deref()
+                                    .filter(|name| !name.is_empty())
+                                    .map(|name| format!(" ({name})"))
+                                    .unwrap_or_default()
+                            )
+                        } else {
+                            format!(
+                                "The primary AT-SPI action{} returned false.",
+                                action_name
+                                    .as_deref()
+                                    .filter(|name| !name.is_empty())
+                                    .map(|name| format!(" ({name})"))
+                                    .unwrap_or_default()
+                            )
+                        },
+                        received,
+                        "at-spi",
+                    );
+                    Json(with_focus_context(output, explicit_focus))
+                }
                 Err(error) => Json(action_delivery_failed(
                     "click",
                     error.to_string(),
@@ -547,11 +565,25 @@ impl ComputerUseLinux {
             x,
             y,
             from_screenshot_context,
+            target_resolution,
         } = target
         else {
             unreachable!("click target must resolve to coordinates or an AT-SPI action");
         };
-        let focus = if from_screenshot_context {
+        if let Some(target_resolution) = &target_resolution {
+            if target_resolution.in_viewport == Some(false) {
+                let mut output = action_not_sent(
+                    "click",
+                    "Resolved element is outside the latest screenshot viewport. Scroll it into view, call get_app_state again, then retry the click.",
+                    received,
+                );
+                output.target_resolution = Some(target_resolution.clone());
+                return Json(output);
+            }
+        }
+        let focus = if explicit_focus.is_some() {
+            explicit_focus
+        } else if from_screenshot_context {
             match self.focus_last_screenshot_target_for_input().await {
                 Ok(focus) => focus,
                 Err(message) => {
@@ -578,13 +610,15 @@ impl ComputerUseLinux {
             .await
             == Some(true)
         {
-            return Json(successful_action_with_focus(
+            let mut output = successful_action_with_focus(
                 "click",
                 "Action sent through the uinput absolute pointer.",
                 received,
                 focus.clone(),
                 "uinput-absolute-pointer",
-            ));
+            );
+            output.target_resolution = target_resolution;
+            return Json(output);
         }
         if let Some(session) = self.cached_portal_pointer_session() {
             match portal_click(
@@ -597,13 +631,15 @@ impl ComputerUseLinux {
             .await
             {
                 Ok(()) => {
-                    return Json(successful_action_with_focus(
+                    let mut output = successful_action_with_focus(
                         "click",
                         "Action sent through the remote desktop portal.",
                         received,
                         focus.clone(),
                         "remote-desktop-portal",
-                    ));
+                    );
+                    output.target_resolution = target_resolution;
+                    return Json(output);
                 }
                 Err(_) => self.clear_portal_pointer_session(),
             }
@@ -619,13 +655,15 @@ impl ComputerUseLinux {
                 .await
                 {
                     Ok(()) => {
-                        return Json(successful_action_with_focus(
+                        let mut output = successful_action_with_focus(
                             "click",
                             "Action sent through the remote desktop portal.",
                             received,
                             focus.clone(),
                             "remote-desktop-portal",
-                        ));
+                        );
+                        output.target_resolution = target_resolution;
+                        return Json(output);
                     }
                     Err(_) => self.clear_portal_pointer_session(),
                 },
@@ -642,7 +680,9 @@ impl ComputerUseLinux {
                 button,
             ],
         ]);
-        Json(action_result_with_focus("click", result, received, focus))
+        let mut output = action_result_with_focus("click", result, received, focus);
+        output.target_resolution = target_resolution;
+        Json(output)
     }
 
     #[tool(
@@ -691,20 +731,26 @@ impl ComputerUseLinux {
         };
 
         match set_element_value(&object_ref, &params.value).await {
-            Ok(ValueSetInvocation::Numeric { value }) => Json(action_invocation_result(
-                "set_value",
-                true,
-                format!("AT-SPI numeric value set to {value}."),
-                received,
-                "at-spi",
-            )),
-            Ok(ValueSetInvocation::EditableText) => Json(action_invocation_result(
-                "set_value",
-                true,
-                "AT-SPI editable text contents set.",
-                received,
-                "at-spi",
-            )),
+            Ok(ValueSetInvocation::Numeric { value, readback }) => {
+                let output = action_invocation_result(
+                    "set_value",
+                    true,
+                    format!("AT-SPI numeric value set to {value}."),
+                    received,
+                    "at-spi",
+                );
+                Json(with_set_value_readback(output, &params.value, &readback))
+            }
+            Ok(ValueSetInvocation::EditableText { readback }) => {
+                let output = action_invocation_result(
+                    "set_value",
+                    true,
+                    "AT-SPI editable text contents set.",
+                    received,
+                    "at-spi",
+                );
+                Json(with_set_value_readback(output, &params.value, &readback))
+            }
             Err(error) => Json(action_delivery_failed(
                 "set_value",
                 error.to_string(),
@@ -1058,7 +1104,7 @@ impl ComputerUseLinux {
 #[tool_handler(
     name = "codex-computer-use-linux",
     version = "0.2.9-codex.1",
-    instructions = "Begin every turn that uses Computer Use by calling get_app_state. If diagnostics report disabled GNOME accessibility, call setup_accessibility before asking the user to retry. Use list_windows/focused_window before targeted keyboard input. If diagnostics report windowing.can_list_windows=false on GNOME, call setup_window_targeting to install the optional GNOME Shell extension backend, then ask the user to log out and back in if the setup report says a shell reload is required. This Linux backend can capture size-bounded screenshots through GNOME Shell, Hyprland grim, XDG Desktop Portal, or gnome-screenshot fallback, read AT-SPI trees with action/value metadata, invoke native AT-SPI actions, set AT-SPI values or editable text, list/focus compositor windows through registered Linux window backends when the session permits it, attach best-effort terminal tty/process metadata to terminal windows, and send coordinate or element-targeted click/scroll/drag input through the Wayland remote desktop portal when available, and send layout-safe literal type_text through KDE clipboard integration on Plasma Wayland or through portal keysyms on other Wayland sessions before falling back to ydotool. Screenshot results include width/height for the returned image plus coordinate_width/coordinate_height, coordinate_space/origin metadata, scale, screenshot_backend, and visual_confidence; use monitor for Hyprland monitor capture, or request more detail with max_width, max_height, max_bytes, format=jpeg, quality, or a smaller target/crop instead of relying on unbounded screenshots. Action results separate delivery, targeting, and observed_outcome; ok=true means the action was delivered or invoked, not that the UI changed, unless observed_outcome says so. For element-targeted actions, prefer element_index from the latest get_app_state result; click, perform_action, and set_value can also use semantic role/name/text/states selectors when the target is unique. type_text and press_key accept optional window_id, pid, app_id, wm_class, title, tty, terminal_pid, terminal_command, or terminal_cwd selectors and refuse targeted input if focus cannot be verified."
+    instructions = "Begin every turn that uses Computer Use by calling get_app_state. If diagnostics report disabled GNOME accessibility, call setup_accessibility before asking the user to retry. Use list_windows/focused_window before targeted keyboard input. If diagnostics report windowing.can_list_windows=false on GNOME, call setup_window_targeting to install the optional GNOME Shell extension backend, then ask the user to log out and back in if the setup report says a shell reload is required. This Linux backend can capture size-bounded screenshots through GNOME Shell, Hyprland grim, XDG Desktop Portal, or gnome-screenshot fallback, read AT-SPI trees with action/value metadata, invoke native AT-SPI actions, set AT-SPI values or editable text, list/focus compositor windows through registered Linux window backends when the session permits it, attach best-effort terminal tty/process metadata to terminal windows, and send coordinate or element-targeted click/scroll/drag input through the Wayland remote desktop portal when available, and send layout-safe literal type_text through KDE clipboard integration on Plasma Wayland or through portal keysyms on other Wayland sessions before falling back to ydotool. Screenshot results include width/height for the returned image plus coordinate_width/coordinate_height, coordinate_space/origin metadata, scale, screenshot_backend, and visual_confidence; use monitor for Hyprland monitor capture, or request more detail with max_width, max_height, max_bytes, format=jpeg, quality, or a smaller target/crop instead of relying on unbounded screenshots. Action results separate delivery, targeting, and observed_outcome; ok=true means the action was delivered or invoked, not that the UI changed, unless observed_outcome says so. For element-targeted actions, prefer element_index from the latest get_app_state result; click, perform_action, and set_value can also use semantic role/name/text/states selectors when the target is unique. click, type_text, and press_key accept optional window_id, pid, app_id, wm_class, title, tty, terminal_pid, terminal_command, or terminal_cwd selectors and refuse targeted input if focus cannot be verified."
 )]
 impl ServerHandler for ComputerUseLinux {}
 
@@ -1275,6 +1321,24 @@ struct ClickParams {
     button: Option<String>,
     #[serde(default)]
     click_count: Option<u32>,
+    #[serde(default)]
+    window_id: Option<u64>,
+    #[serde(default)]
+    pid: Option<u32>,
+    #[serde(default)]
+    tty: Option<String>,
+    #[serde(default)]
+    terminal_pid: Option<u32>,
+    #[serde(default)]
+    terminal_command: Option<String>,
+    #[serde(default)]
+    terminal_cwd: Option<String>,
+    #[serde(default)]
+    app_id: Option<String>,
+    #[serde(default)]
+    wm_class: Option<String>,
+    #[serde(default)]
+    title: Option<String>,
 }
 
 impl ClickParams {
@@ -1284,6 +1348,20 @@ impl ClickParams {
             name: self.name.as_deref(),
             text: self.text.as_deref(),
             states: &self.states,
+        }
+    }
+
+    fn window_target(&self) -> WindowTarget {
+        WindowTarget {
+            window_id: self.window_id,
+            pid: self.pid,
+            tty: self.tty.clone(),
+            terminal_pid: self.terminal_pid,
+            terminal_command: self.terminal_command.clone(),
+            terminal_cwd: self.terminal_cwd.clone(),
+            app_id: self.app_id.clone(),
+            wm_class: self.wm_class.clone(),
+            title: self.title.clone(),
         }
     }
 }
@@ -1452,6 +1530,8 @@ struct ActionOutput {
     message: String,
     delivery: ActionDelivery,
     targeting: ActionTargeting,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    target_resolution: Option<ActionTargetResolution>,
     observed_outcome: ActionObservedOutcome,
     confidence: VisualConfidence,
     // Debug-only echo of the request. `serde_json::Value` serializes to a
@@ -1498,6 +1578,44 @@ struct ActionTargeting {
     focused_window_id: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     verification: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+struct ActionTargetResolution {
+    method: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    element_index: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    object_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    role: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    text: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    bounds: Option<Bounds>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    click_x: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    click_y: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    viewport: Option<ActionViewport>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    in_viewport: Option<bool>,
+    detail: String,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+struct ActionViewport {
+    origin_x: i32,
+    origin_y: i32,
+    coordinate_width: u32,
+    coordinate_height: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    coordinate_space: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    target_window_id: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
@@ -1842,7 +1960,26 @@ impl ComputerUseLinux {
                     origin_y,
                     width: capture.width,
                     height: capture.height,
+                    coordinate_width: capture.coordinate_width,
+                    coordinate_height: capture.coordinate_height,
+                    scale: capture.scale,
+                    coordinate_space: capture.coordinate_space.clone(),
                     target_window_id: capture.target_window_id,
+                })
+        } else if capture.coordinate_space.as_deref() == Some("global-logical") {
+            capture
+                .origin_x
+                .zip(capture.origin_y)
+                .map(|(origin_x, origin_y)| ScreenshotContext {
+                    origin_x,
+                    origin_y,
+                    width: capture.width,
+                    height: capture.height,
+                    coordinate_width: capture.coordinate_width,
+                    coordinate_height: capture.coordinate_height,
+                    scale: capture.scale,
+                    coordinate_space: capture.coordinate_space.clone(),
+                    target_window_id: None,
                 })
         } else {
             None
@@ -1860,10 +1997,29 @@ impl ComputerUseLinux {
         let Some(context) = cached.as_ref() else {
             return ((x, y), false);
         };
+        if context.coordinate_space.as_deref() != Some("window-local") {
+            return ((x, y), false);
+        }
         if x < 0 || y < 0 || x as u32 >= context.width || y as u32 >= context.height {
             return ((x, y), false);
         }
-        ((context.origin_x + x, context.origin_y + y), true)
+        let scale = context.scale.max(f32::EPSILON);
+        let coordinate_x = ((x as f32) / scale).round() as i32;
+        let coordinate_y = ((y as f32) / scale).round() as i32;
+        if coordinate_x < 0
+            || coordinate_y < 0
+            || coordinate_x as u32 >= context.coordinate_width
+            || coordinate_y as u32 >= context.coordinate_height
+        {
+            return ((x, y), false);
+        }
+        (
+            (
+                context.origin_x + coordinate_x,
+                context.origin_y + coordinate_y,
+            ),
+            true,
+        )
     }
 
     fn last_screenshot_target(&self) -> Option<WindowTarget> {
@@ -1880,6 +2036,19 @@ impl ComputerUseLinux {
             title: None,
         })
         .filter(|target| target.has_target())
+    }
+
+    fn last_screenshot_viewport(&self) -> Option<ActionViewport> {
+        let cached = self.last_screenshot_context.lock().ok()?;
+        let context = cached.as_ref()?;
+        Some(ActionViewport {
+            origin_x: context.origin_x,
+            origin_y: context.origin_y,
+            coordinate_width: context.coordinate_width,
+            coordinate_height: context.coordinate_height,
+            coordinate_space: context.coordinate_space.clone(),
+            target_window_id: context.target_window_id,
+        })
     }
 
     async fn focus_last_screenshot_target_for_input(
@@ -1961,6 +2130,20 @@ impl ComputerUseLinux {
                 x,
                 y,
                 from_screenshot_context,
+                target_resolution: Some(ActionTargetResolution {
+                    method: "coordinates".to_string(),
+                    element_index: None,
+                    object_ref: None,
+                    role: None,
+                    name: None,
+                    text: None,
+                    bounds: None,
+                    click_x: Some(x),
+                    click_y: Some(y),
+                    viewport: self.last_screenshot_viewport(),
+                    in_viewport: None,
+                    detail: "Click target came from explicit coordinates.".to_string(),
+                }),
             });
         }
 
@@ -1972,10 +2155,12 @@ impl ComputerUseLinux {
         )?;
 
         if let Some((x, y)) = node.bounds.as_ref().and_then(bounds_center) {
+            let target_resolution = self.element_target_resolution(&node, x, y);
             return Ok(ClickTarget::Coordinates {
                 x,
                 y,
                 from_screenshot_context: false,
+                target_resolution: Some(target_resolution),
             });
         }
 
@@ -2002,6 +2187,45 @@ impl ComputerUseLinux {
         let cached = self.last_nodes.lock().ok()?;
         let node = cached.iter().find(|node| node.index == element_index)?;
         bounds_center(node.bounds.as_ref()?)
+    }
+
+    fn element_target_resolution(
+        &self,
+        node: &AccessibilityNode,
+        click_x: i32,
+        click_y: i32,
+    ) -> ActionTargetResolution {
+        let viewport = self.last_screenshot_viewport();
+        let in_viewport = viewport
+            .as_ref()
+            .map(|viewport| point_in_viewport(click_x, click_y, viewport));
+        let detail = match in_viewport {
+            Some(true) => {
+                "Element bounds were resolved from the cached AT-SPI tree and the click point is inside the latest screenshot viewport."
+            }
+            Some(false) => {
+                "Element bounds were resolved from the cached AT-SPI tree, but the click point is outside the latest screenshot viewport."
+            }
+            None => {
+                "Element bounds were resolved from the cached AT-SPI tree; no screenshot viewport was cached for visibility verification."
+            }
+        }
+        .to_string();
+
+        ActionTargetResolution {
+            method: "at-spi-bounds".to_string(),
+            element_index: Some(node.index),
+            object_ref: Some(node.object_ref.clone()),
+            role: Some(node.role.clone()),
+            name: node.name.clone(),
+            text: node.text.as_ref().and_then(|text| text.content.clone()),
+            bounds: node.bounds.clone(),
+            click_x: Some(click_x),
+            click_y: Some(click_y),
+            viewport,
+            in_viewport,
+            detail,
+        }
     }
 
     fn resolve_object_ref(
@@ -2116,6 +2340,7 @@ enum ClickTarget {
         x: i32,
         y: i32,
         from_screenshot_context: bool,
+        target_resolution: Option<ActionTargetResolution>,
     },
     PrimaryAction {
         object_ref: String,
@@ -2718,6 +2943,7 @@ fn action_not_sent(
         message: message.into(),
         delivery: ActionDelivery::not_sent(),
         targeting: ActionTargeting::not_requested(),
+        target_resolution: None,
         observed_outcome: ActionObservedOutcome::not_observed(),
         confidence: VisualConfidence::Unavailable,
         received,
@@ -2749,6 +2975,7 @@ fn action_delivered(
         message: message.clone(),
         delivery: ActionDelivery::delivered(backend, message),
         targeting: ActionTargeting::not_requested(),
+        target_resolution: None,
         observed_outcome: ActionObservedOutcome::not_observed(),
         confidence: VisualConfidence::Unavailable,
         received,
@@ -2769,6 +2996,7 @@ fn action_delivery_failed(
         message: message.clone(),
         delivery: ActionDelivery::failed(backend, message),
         targeting: ActionTargeting::not_requested(),
+        target_resolution: None,
         observed_outcome: ActionObservedOutcome::not_observed(),
         confidence: VisualConfidence::Unavailable,
         received,
@@ -2788,6 +3016,60 @@ fn action_invocation_result(
         "The action addressed an accessibility object, not a target window.",
     );
     output
+}
+
+fn with_set_value_readback(
+    mut output: ActionOutput,
+    intended_value: &str,
+    readback: &ElementValueReadback,
+) -> ActionOutput {
+    if let Some(actual) = readback_best_effort_text(readback) {
+        if readback_matches(intended_value, &actual) {
+            output.message = format!(
+                "{} Readback confirmed value_after={actual:?}.",
+                output.message
+            );
+            output.observed_outcome = ActionObservedOutcome::verified(format!(
+                "AT-SPI readback matched intended_value={intended_value:?}."
+            ));
+        } else {
+            output.ok = false;
+            output.message = format!(
+                "{} Readback mismatch: intended_value={intended_value:?}, value_after={actual:?}.",
+                output.message
+            );
+            output.observed_outcome = ActionObservedOutcome::failed(format!(
+                "AT-SPI readback value_after={actual:?} did not match intended_value={intended_value:?}."
+            ));
+        }
+    } else {
+        output.message = format!(
+            "{} AT-SPI did not expose a value_after readback, so field state was not verified.",
+            output.message
+        );
+        output.observed_outcome = ActionObservedOutcome::unavailable(
+            "AT-SPI did not expose value or text readback after setting the value.",
+        );
+    }
+    output
+}
+
+fn readback_best_effort_text(readback: &ElementValueReadback) -> Option<String> {
+    readback
+        .text_content
+        .clone()
+        .or_else(|| readback.value_text.clone())
+        .or_else(|| readback.numeric_value.map(|value| value.to_string()))
+}
+
+fn readback_matches(intended: &str, actual: &str) -> bool {
+    if intended == actual {
+        return true;
+    }
+    match (intended.parse::<f64>(), actual.parse::<f64>()) {
+        (Ok(left), Ok(right)) => (left - right).abs() < f64::EPSILON,
+        _ => false,
+    }
 }
 
 impl ActionDelivery {
@@ -2868,6 +3150,27 @@ impl ActionObservedOutcome {
             detail: "No post-action observation was collected; delivery does not prove that the UI changed.".to_string(),
         }
     }
+
+    fn verified(detail: impl Into<String>) -> Self {
+        Self {
+            status: ActionObservedOutcomeStatus::Verified,
+            detail: detail.into(),
+        }
+    }
+
+    fn failed(detail: impl Into<String>) -> Self {
+        Self {
+            status: ActionObservedOutcomeStatus::Failed,
+            detail: detail.into(),
+        }
+    }
+
+    fn unavailable(detail: impl Into<String>) -> Self {
+        Self {
+            status: ActionObservedOutcomeStatus::Unavailable,
+            detail: detail.into(),
+        }
+    }
 }
 
 fn focus_satisfies_target(focus: &WindowFocusResult, target: &WindowTarget) -> bool {
@@ -2876,6 +3179,23 @@ fn focus_satisfies_target(focus: &WindowFocusResult, target: &WindowTarget) -> b
     } else {
         focus.exact_window_focused || focus.app_focused
     }
+}
+
+fn point_in_viewport(x: i32, y: i32, viewport: &ActionViewport) -> bool {
+    let Ok(width) = i32::try_from(viewport.coordinate_width) else {
+        return false;
+    };
+    let Ok(height) = i32::try_from(viewport.coordinate_height) else {
+        return false;
+    };
+    let Some(right) = viewport.origin_x.checked_add(width) else {
+        return false;
+    };
+    let Some(bottom) = viewport.origin_y.checked_add(height) else {
+        return false;
+    };
+
+    x >= viewport.origin_x && y >= viewport.origin_y && x < right && y < bottom
 }
 
 async fn window_list_output() -> ListWindowsOutput {
@@ -3413,6 +3733,23 @@ mod tests {
         }
     }
 
+    fn resized_capture_with_context(
+        origin_x: i32,
+        origin_y: i32,
+        width: u32,
+        height: u32,
+        coordinate_width: u32,
+        coordinate_height: u32,
+        target_window_id: Option<u64>,
+    ) -> ScreenshotCapture {
+        let mut capture = capture_with_context(origin_x, origin_y, width, height, target_window_id);
+        capture.coordinate_width = coordinate_width;
+        capture.coordinate_height = coordinate_height;
+        capture.scale = width as f32 / coordinate_width as f32;
+        capture.resized = true;
+        capture
+    }
+
     #[tokio::test]
     async fn targeted_window_screenshot_rejects_unverified_raise_false_capture() {
         let server = ComputerUseLinux::default();
@@ -3466,6 +3803,29 @@ mod tests {
     }
 
     #[test]
+    fn translates_resized_screenshot_points_back_to_coordinate_space() {
+        let server = ComputerUseLinux::default();
+        server.cache_screenshot_context(&resized_capture_with_context(
+            100,
+            200,
+            400,
+            300,
+            800,
+            600,
+            Some(42),
+        ));
+
+        assert_eq!(
+            server.translate_screenshot_point(20, 30),
+            ((140, 260), true)
+        );
+        assert_eq!(
+            server.translate_screenshot_point(401, 30),
+            ((401, 30), false)
+        );
+    }
+
+    #[test]
     fn explicit_click_coordinates_use_window_screenshot_context() {
         let server = ComputerUseLinux::default();
         server.cache_screenshot_context(&capture_with_context(100, 200, 800, 600, Some(42)));
@@ -3483,12 +3843,38 @@ mod tests {
                 x,
                 y,
                 from_screenshot_context,
+                target_resolution,
             } => {
                 assert_eq!((x, y), (112, 234));
                 assert!(from_screenshot_context);
+                assert_eq!(
+                    target_resolution
+                        .as_ref()
+                        .and_then(|resolution| resolution.in_viewport),
+                    None
+                );
             }
             ClickTarget::PrimaryAction { .. } => panic!("expected translated coordinates"),
         }
+    }
+
+    #[test]
+    fn click_params_carry_explicit_window_target() {
+        let target = ClickParams {
+            window_id: Some(42),
+            pid: Some(9001),
+            app_id: Some("brave-browser-nightly".to_string()),
+            wm_class: Some("Brave-browser".to_string()),
+            title: Some("Cloudflare".to_string()),
+            ..Default::default()
+        }
+        .window_target();
+
+        assert_eq!(target.window_id, Some(42));
+        assert_eq!(target.pid, Some(9001));
+        assert_eq!(target.app_id.as_deref(), Some("brave-browser-nightly"));
+        assert_eq!(target.wm_class.as_deref(), Some("Brave-browser"));
+        assert_eq!(target.title.as_deref(), Some("Cloudflare"));
     }
 
     #[test]
@@ -4039,6 +4425,114 @@ mod tests {
     }
 
     #[test]
+    fn set_value_readback_verifies_matching_text() {
+        let output = with_set_value_readback(
+            action_invocation_result(
+                "set_value",
+                true,
+                "AT-SPI editable text contents set.",
+                None,
+                "at-spi",
+            ),
+            "bypass-cursor-glass-api",
+            &ElementValueReadback {
+                text_content: Some("bypass-cursor-glass-api".to_string()),
+                ..Default::default()
+            },
+        );
+
+        assert!(output.ok);
+        assert_eq!(
+            output.observed_outcome.status,
+            ActionObservedOutcomeStatus::Verified
+        );
+        assert!(output.message.contains("Readback confirmed"));
+    }
+
+    #[test]
+    fn set_value_readback_mismatch_fails_observed_outcome() {
+        let output = with_set_value_readback(
+            action_invocation_result(
+                "set_value",
+                true,
+                "AT-SPI editable text contents set.",
+                None,
+                "at-spi",
+            ),
+            "cursor-glass.ravishdixit.xyz",
+            &ElementValueReadback {
+                text_content: Some("cursor-glass.".to_string()),
+                ..Default::default()
+            },
+        );
+
+        assert!(!output.ok);
+        assert_eq!(
+            output.observed_outcome.status,
+            ActionObservedOutcomeStatus::Failed
+        );
+        assert!(output.message.contains("Readback mismatch"));
+    }
+
+    #[test]
+    fn set_value_readback_unavailable_downgrades_observed_outcome() {
+        let output = with_set_value_readback(
+            action_invocation_result(
+                "set_value",
+                true,
+                "AT-SPI numeric value set.",
+                None,
+                "at-spi",
+            ),
+            "42",
+            &ElementValueReadback::default(),
+        );
+
+        assert!(output.ok);
+        assert_eq!(
+            output.observed_outcome.status,
+            ActionObservedOutcomeStatus::Unavailable
+        );
+        assert!(output.message.contains("not expose a value_after readback"));
+    }
+
+    #[test]
+    fn element_click_resolution_reports_viewport_membership() {
+        let backend = ComputerUseLinux::default();
+        backend.cache_screenshot_context(&capture_with_context(100, 200, 800, 600, Some(42)));
+        let inside = backend.element_target_resolution(
+            &node(
+                7,
+                Some(Bounds {
+                    x: 120,
+                    y: 220,
+                    width: 100,
+                    height: 40,
+                }),
+            ),
+            170,
+            240,
+        );
+        let outside = backend.element_target_resolution(
+            &node(
+                8,
+                Some(Bounds {
+                    x: 20,
+                    y: 20,
+                    width: 100,
+                    height: 40,
+                }),
+            ),
+            70,
+            40,
+        );
+
+        assert_eq!(inside.in_viewport, Some(true));
+        assert_eq!(outside.in_viewport, Some(false));
+        assert_eq!(inside.viewport.unwrap().target_window_id, Some(42));
+    }
+
+    #[test]
     fn absolute_mousemove_uses_coordinate_separator() {
         assert_eq!(
             absolute_mousemove_args(200, 300),
@@ -4367,7 +4861,8 @@ mod tests {
             ClickTarget::Coordinates {
                 x: 60,
                 y: 40,
-                from_screenshot_context: false
+                from_screenshot_context: false,
+                ..
             }
         ));
     }
