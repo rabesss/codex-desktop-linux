@@ -192,7 +192,7 @@ inspect-upstream:
 
 build-app:
 	@echo "[make] Regenerating codex-app from DMG"
-	MAX_BUILD_THREADS="$(MAX_BUILD_THREADS)" ./install.sh "$(DMG)"
+	MAX_BUILD_THREADS="$(MAX_BUILD_THREADS)" ./install.sh --fresh --reuse-dmg "$(DMG)"
 
 build-app-fresh:
 	@echo "[make] Regenerating codex-app from fresh DMG"

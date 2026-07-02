@@ -230,10 +230,9 @@ pub fn approved_dmg_already_installed(
     state: &PersistedState,
     approved: &ApprovedUpstreamDmg,
 ) -> bool {
-    state.dmg_sha256.as_deref() == Some(approved.sha256.as_str())
-        || state
-            .installed_version
-            .contains(&format!("+{}", approved.short_sha()))
+    state
+        .installed_version
+        .contains(&format!("+{}", approved.short_sha()))
         || installed_app_dmg_sha256(config).as_deref() == Some(approved.sha256.as_str())
 }
 
@@ -245,6 +244,7 @@ pub fn refresh_approved_installed_state(
     refresh_installed_wrapper_state(config, state);
     if installed_app_dmg_sha256(config).as_deref() == Some(approved.sha256.as_str()) {
         state.dmg_sha256 = Some(approved.sha256.clone());
+        state.artifact_paths.dmg_path = None;
     }
 }
 
@@ -430,6 +430,17 @@ mod tests {
     }
 
     #[test]
+    fn state_dmg_sha_alone_does_not_count_as_approved() {
+        let approved = approved();
+        let temp = tempfile::tempdir().expect("tempdir");
+        let config = config_with_app_executable(temp.path().join("app/electron"));
+        let mut state = PersistedState::new(true);
+        state.dmg_sha256 = Some(approved.sha256.clone());
+
+        assert!(!approved_dmg_already_installed(&config, &state, &approved));
+    }
+
+    #[test]
     fn installed_build_info_sha_counts_as_approved() {
         let approved = approved();
         let temp = tempfile::tempdir().expect("tempdir");
@@ -463,10 +474,12 @@ mod tests {
         state.installed_wrapper_version = Some("0.8.7".to_string());
         state.installed_wrapper_commit =
             Some("22c74b0256b39b2ab3f8a26ece9a63c785297c63".to_string());
+        state.artifact_paths.dmg_path = Some(temp.path().join("downloads/Codex.dmg"));
 
         refresh_approved_installed_state(&config, &mut state, &approved);
 
         assert_eq!(state.dmg_sha256.as_deref(), Some(approved.sha256.as_str()));
+        assert_eq!(state.artifact_paths.dmg_path, None);
         assert_eq!(
             state.installed_wrapper_commit.as_deref(),
             Some(current_commit)

@@ -525,8 +525,7 @@ PY
             cp ${codexDmg} "$source_dir/Codex.dmg"
 
             substituteInPlace "$source_dir/scripts/lib/asar-patch.sh" \
-              --replace-fail "npx --yes asar" "asar" \
-              --replace-fail "npx asar" "asar"
+              --replace-fail "npx --yes asar" "asar"
             substituteInPlace "$source_dir/scripts/lib/dmg.sh" \
               --replace-fail "npx --yes asar" "asar"
 

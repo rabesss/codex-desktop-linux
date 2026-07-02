@@ -2231,6 +2231,16 @@ test("composer attachment prop patch supports the Electron 42.1.0 context menu",
   assert.match(patched, /setFileAttachments:Bi,supportsImageInputs:Ct,supportsFileAttachments:/);
 });
 
+test("composer attachment prop patch supports renamed minified context menu hooks", () => {
+  const source = [
+    "let{imageInputUnsupportedReason:wt,notifyImageInputUnsupported:Tt,supportsImageInputs:Et}=Tw({scope:I,conversationId:U,intl:ft});",
+    "Os=AB({executionTargetCwd:K.cwd,executionTargetHostId:Tr,getAppshotCaptureAnimationDestinationFrame:Ki,getAttachmentGen:Zs,onAddAppshotContext:rs,onAddImageDataUrls:rr,onAddLocalFileAttachments:qs,onAppshotCaptureAnimationDuration:Vi,onAppshotCaptureSettled:Gi,onAppshotCaptureStarted:Ui,onPickBrowserFiles:void 0,setFileAttachments:Ge,supportsFileAttachments:dr!==`cloud`||!hr&&Tr===`local`,supportsRemoteFileAttachments:dr!==`cloud`&&Tr!==`local`})",
+  ].join("");
+  const patched = applyPatchTwice(applyCustomModelComposerAttachmentPropPatch, source);
+
+  assert.match(patched, /setFileAttachments:Ge,supportsImageInputs:Et,supportsFileAttachments:/);
+});
+
 test("attachment menu patch hides image affordances for text-only models", () => {
   const source = attachmentMenuBundleFixture();
   const patched = applyPatchTwice(applyCustomModelAttachmentMenuPatch, source);

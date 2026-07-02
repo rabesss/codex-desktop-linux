@@ -837,7 +837,8 @@ function applyCustomModelComposerAttachmentPropPatch(source) {
     /onOpenGoalEditor:[A-Za-z_$][\w$]*,supportsImageInputs:[A-Za-z_$][\w$]*,supportsFileAttachments:/u.test(source) ||
     /[A-Za-z_$][\w$]*=Qy\(\{[^{}]{0,1200}?setFileAttachments:[A-Za-z_$][\w$]*,supportsImageInputs:[A-Za-z_$][\w$]*,supportsFileAttachments:/u.test(source) ||
     /[A-Za-z_$][\w$]*=lU\(\{[^{}]{0,1800}?setFileAttachments:[A-Za-z_$][\w$]*,supportsImageInputs:[A-Za-z_$][\w$]*,supportsFileAttachments:/u.test(source) ||
-    /[A-Za-z_$][\w$]*=sq\(\{[^{}]{0,2200}?setFileAttachments:[A-Za-z_$][\w$]*,supportsImageInputs:[A-Za-z_$][\w$]*,supportsFileAttachments:/u.test(source)
+    /[A-Za-z_$][\w$]*=sq\(\{[^{}]{0,2200}?setFileAttachments:[A-Za-z_$][\w$]*,supportsImageInputs:[A-Za-z_$][\w$]*,supportsFileAttachments:/u.test(source) ||
+    /[A-Za-z_$][\w$]*=[A-Za-z_$][\w$]*\(\{[^{}]{0,2600}?setFileAttachments:[A-Za-z_$][\w$]*,supportsImageInputs:[A-Za-z_$][\w$]*,supportsFileAttachments:/u.test(source)
   ) {
     return source;
   }
@@ -871,6 +872,15 @@ function applyCustomModelComposerAttachmentPropPatch(source) {
     return source.replace(
       electron421AttachmentMenuMatch[0],
       `${electron421AttachmentMenuMatch[1]}supportsImageInputs:${capabilityMatch[1]},${electron421AttachmentMenuMatch[2]}`,
+    );
+  }
+  const dynamicAttachmentMenuMatch = source.match(
+    /([A-Za-z_$][\w$]*=[A-Za-z_$][\w$]*\(\{[^{}]{0,2600}?setFileAttachments:[A-Za-z_$][\w$]*,)(supportsFileAttachments:)/u,
+  );
+  if (capabilityMatch != null && dynamicAttachmentMenuMatch != null) {
+    return source.replace(
+      dynamicAttachmentMenuMatch[0],
+      `${dynamicAttachmentMenuMatch[1]}supportsImageInputs:${capabilityMatch[1]},${dynamicAttachmentMenuMatch[2]}`,
     );
   }
   const propMatch = source.match(COMPOSER_ATTACHMENT_PROP_REGEX);

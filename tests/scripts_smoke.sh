@@ -4,6 +4,7 @@ set -Eeuo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 TMP_DIR="$(mktemp -d)"
+COREUTILS_ENV="${COREUTILS_ENV:-/usr/bin/env}"
 
 export CODEX_LINUX_FEATURES_CONFIG="$REPO_DIR/linux-features/features.example.json"
 
@@ -1182,6 +1183,8 @@ test_make_build_app_uses_installer_download_flow_by_default() {
     local install_log="$workspace/install-args.log"
     local first_line
     local second_line
+    local third_line
+    local fourth_line
 
     mkdir -p "$workspace"
 
@@ -1189,9 +1192,9 @@ test_make_build_app_uses_installer_download_flow_by_default() {
 #!/usr/bin/env bash
 set -eu
 printf '%s\n' "$#" > "$TEST_INSTALL_LOG"
-if [ "$#" -gt 0 ]; then
-    printf '%s\n' "$1" >> "$TEST_INSTALL_LOG"
-fi
+for arg in "$@"; do
+    printf '%s\n' "$arg" >> "$TEST_INSTALL_LOG"
+done
 SCRIPT
     chmod +x "$workspace/install.sh"
 
@@ -1200,8 +1203,12 @@ SCRIPT
     assert_file_exists "$install_log"
     first_line="$(sed -n '1p' "$install_log")"
     second_line="$(sed -n '2p' "$install_log")"
-    [ "$first_line" = "1" ] || fail "Expected make build-app to call install.sh with a single default argument slot, got: $(cat "$install_log")"
-    [ -z "$second_line" ] || fail "Expected make build-app default DMG argument to be empty so install.sh falls back to reuse/download, got: $(cat "$install_log")"
+    third_line="$(sed -n '3p' "$install_log")"
+    fourth_line="$(sed -n '4p' "$install_log")"
+    [ "$first_line" = "3" ] || fail "Expected make build-app to pass --fresh, --reuse-dmg, plus the default argument slot, got: $(cat "$install_log")"
+    [ "$second_line" = "--fresh" ] || fail "Expected make build-app to clear stale codex-app output, got: $(cat "$install_log")"
+    [ "$third_line" = "--reuse-dmg" ] || fail "Expected make build-app to preserve matching cached DMG reuse, got: $(cat "$install_log")"
+    [ -z "$fourth_line" ] || fail "Expected make build-app default DMG argument to be empty so install.sh falls back to reuse/download, got: $(cat "$install_log")"
 }
 
 test_make_build_app_fresh_uses_installer_fresh_flow() {
@@ -1860,6 +1867,7 @@ test_support_metadata_workflows_are_resilient() {
     info "Checking support metadata workflow checkout depth and ownership boundaries"
     local heartbeat="$REPO_DIR/.github/workflows/upstream-approval-heartbeat.yml"
     local supported_docs="$REPO_DIR/.github/workflows/supported-docs.yml"
+    local flake="$REPO_DIR/flake.nix"
 
     assert_file_exists "$heartbeat"
     assert_contains "$heartbeat" 'name: Upstream Approval Heartbeat'
@@ -1872,6 +1880,9 @@ test_support_metadata_workflows_are_resilient() {
     assert_contains "$supported_docs" 'fetch-depth: 0'
     assert_contains "$supported_docs" 'node scripts/ci/render-supported-md.js --output SUPPORTED.md'
     assert_contains "$supported_docs" 'docs: refresh supported versions'
+
+    assert_contains "$flake" '--replace-fail "npx --yes asar" "asar"'
+    assert_not_contains "$flake" '--replace-fail "npx asar" "asar"'
 }
 
 test_installer_detects_electron_version_from_plist() {
@@ -2801,7 +2812,7 @@ SCRIPT
     cat "$REPO_DIR/launcher/start.sh.template" >> "$missing_cli_start"
     chmod +x "$missing_cli_start"
 
-    env -i \
+    "$COREUTILS_ENV" -i \
         PATH="$missing_cli_workspace:/usr/bin:/bin" \
         HOME="$missing_cli_home" \
         XDG_CACHE_HOME="$missing_cli_workspace/cache" \
@@ -3152,68 +3163,68 @@ open(output_path, "w", encoding="utf-8").write(probe)
 PY
     chmod +x "$launcher_probe"
 
-    output="$(env -i PATH="$PATH" HOME="$HOME" CODEX_LINUX_RENDERING_MODE=default "$launcher_probe" probe --x11 -- --use-gl=angle)"
+    output="$("$COREUTILS_ENV" -i PATH="$PATH" HOME="$HOME" CODEX_LINUX_RENDERING_MODE=default "$launcher_probe" probe --x11 -- --use-gl=angle)"
     [[ "$output" == *"electron=<--use-gl=angle>"* ]] || fail "launcher must pass Electron args after -- without the separator: $output"
     [[ "$output" != *"electron=<--><--use-gl=angle>"* ]] || fail "launcher must not pass the -- separator to Electron: $output"
     [[ "$output" == *"<--ozone-platform=x11>"* ]] || fail "launcher --x11 must still set the Electron ozone platform: $output"
     [[ "$output" == *"comp=0"* && "$output" != *"<--disable-gpu-compositing>"* ]] || fail "default Linux profile must keep GPU compositing enabled: $output"
     [[ "$output" == *"renderer_accessibility=1"* && "$output" == *"<--force-renderer-accessibility>"* ]] || fail "default Linux profile must still force renderer accessibility: $output"
 
-    output="$(env -i PATH="$PATH" HOME="$HOME" CODEX_LINUX_RENDERING_MODE=default "$launcher_probe" probe -- --ozone-platform=x11)"
+    output="$("$COREUTILS_ENV" -i PATH="$PATH" HOME="$HOME" CODEX_LINUX_RENDERING_MODE=default "$launcher_probe" probe -- --ozone-platform=x11)"
     [[ "$output" == *"electron=<--ozone-platform=x11>"* ]] || fail "pass-through ozone platform must reach Electron: $output"
     [[ "$output" != *"<--ozone-platform-hint=auto>"* ]] || fail "launcher must not add ozone hint when pass-through supplies an ozone platform: $output"
 
-    output="$(env -i PATH="$PATH" HOME="$HOME" CODEX_LINUX_RENDERING_MODE=wayland-gpu "$launcher_probe" probe)"
+    output="$("$COREUTILS_ENV" -i PATH="$PATH" HOME="$HOME" CODEX_LINUX_RENDERING_MODE=wayland-gpu "$launcher_probe" probe)"
     [[ "$output" == *"mode=wayland-gpu"* && "$output" == *"ozone_platform=wayland"* && "$output" == *"gpu=1"* ]] || fail "wayland-gpu profile must force native Wayland with GPU enabled: $output"
     [[ "$output" == *"comp=0"* && "$output" != *"<--disable-gpu-compositing>"* ]] || fail "wayland-gpu profile must keep GPU compositing enabled: $output"
     [[ "$output" == *"<--ozone-platform=wayland>"* && "$output" == *"<--enable-features=WaylandWindowDecorations>"* ]] || fail "wayland-gpu profile must add Wayland launch args: $output"
     [[ "$output" == *"renderer_accessibility=0"* && "$output" != *"<--force-renderer-accessibility>"* ]] || fail "wayland-gpu profile must skip renderer accessibility by default: $output"
 
-    output="$(env -i PATH="$PATH" HOME="$HOME" CODEX_LINUX_RENDERING_MODE=wayland-gpu CODEX_FORCE_RENDERER_ACCESSIBILITY=1 "$launcher_probe" probe)"
+    output="$("$COREUTILS_ENV" -i PATH="$PATH" HOME="$HOME" CODEX_LINUX_RENDERING_MODE=wayland-gpu CODEX_FORCE_RENDERER_ACCESSIBILITY=1 "$launcher_probe" probe)"
     [[ "$output" == *"renderer_accessibility=1"* && "$output" == *"<--force-renderer-accessibility>"* ]] || fail "CODEX_FORCE_RENDERER_ACCESSIBILITY=1 must force renderer accessibility under wayland-gpu: $output"
 
-    output="$(env -i PATH="$PATH" HOME="$HOME" CODEX_LINUX_RENDERING_MODE=wayland-gpu "$launcher_probe" probe --x11)"
+    output="$("$COREUTILS_ENV" -i PATH="$PATH" HOME="$HOME" CODEX_LINUX_RENDERING_MODE=wayland-gpu "$launcher_probe" probe --x11)"
     [[ "$output" == *"mode=wayland-gpu"* && "$output" == *"ozone_platform=x11"* ]] || fail "explicit --x11 must override the wayland-gpu platform: $output"
     [[ "$output" == *"renderer_accessibility=1"* && "$output" == *"<--force-renderer-accessibility>"* ]] || fail "wayland-gpu with explicit --x11 must keep X11 renderer accessibility default: $output"
 
-    output="$(env -i PATH="$PATH" HOME="$HOME" CODEX_LINUX_RENDERING_MODE=wayland-gpu "$launcher_probe" probe --safe-mode)"
+    output="$("$COREUTILS_ENV" -i PATH="$PATH" HOME="$HOME" CODEX_LINUX_RENDERING_MODE=wayland-gpu "$launcher_probe" probe --safe-mode)"
     [[ "$output" == *"mode=wayland-gpu"* && "$output" == *"ozone_platform=x11"* && "$output" == *"gpu=0"* ]] || fail "safe-mode must override wayland-gpu to X11 software rendering: $output"
     [[ "$output" == *"renderer_accessibility=1"* && "$output" == *"<--force-renderer-accessibility>"* ]] || fail "wayland-gpu with safe-mode must keep X11 renderer accessibility default: $output"
 
-    output="$(env -i PATH="$PATH" HOME="$HOME" CODEX_LINUX_RENDERING_MODE=wayland-gpu "$launcher_probe" probe -- --ozone-platform=x11)"
+    output="$("$COREUTILS_ENV" -i PATH="$PATH" HOME="$HOME" CODEX_LINUX_RENDERING_MODE=wayland-gpu "$launcher_probe" probe -- --ozone-platform=x11)"
     [[ "$output" == *"electron=<--ozone-platform=x11>"* && "$output" != *"<--ozone-platform-hint=auto>"* ]] || fail "pass-through X11 platform must override wayland-gpu hinting: $output"
     [[ "$output" == *"renderer_accessibility=1"* && "$output" == *"<--force-renderer-accessibility>"* ]] || fail "wayland-gpu with pass-through X11 platform must keep X11 renderer accessibility default: $output"
 
-    output="$(env -i PATH="$PATH" HOME="$HOME" CODEX_LINUX_RENDERING_MODE=wslg "$launcher_probe" probe)"
+    output="$("$COREUTILS_ENV" -i PATH="$PATH" HOME="$HOME" CODEX_LINUX_RENDERING_MODE=wslg "$launcher_probe" probe)"
     [[ "$output" == *"mode=wslg"* && "$output" == *"comp=0"* && "$output" == *"gl_added=1"* ]] || fail "forced WSLg profile must keep GPU compositing enabled and add ANGLE: $output"
     [[ "$output" == *"<--ozone-platform=x11>"* && "$output" == *"electron=<--use-gl=angle>"* ]] || fail "forced WSLg profile must use X11 and ANGLE by default: $output"
     [[ "$output" != *"<--disable-gpu-compositing>"* ]] || fail "forced WSLg profile must not add disable-gpu-compositing by default: $output"
     [[ "$output" == *"renderer_accessibility=0"* && "$output" != *"<--force-renderer-accessibility>"* ]] || fail "forced WSLg profile must skip renderer accessibility by default: $output"
 
-    output="$(env -i PATH="$PATH" HOME="$HOME" CODEX_LINUX_RENDERING_MODE=wslg CODEX_FORCE_RENDERER_ACCESSIBILITY=1 "$launcher_probe" probe)"
+    output="$("$COREUTILS_ENV" -i PATH="$PATH" HOME="$HOME" CODEX_LINUX_RENDERING_MODE=wslg CODEX_FORCE_RENDERER_ACCESSIBILITY=1 "$launcher_probe" probe)"
     [[ "$output" == *"renderer_accessibility=1"* && "$output" == *"<--force-renderer-accessibility>"* ]] || fail "CODEX_FORCE_RENDERER_ACCESSIBILITY=1 must force renderer accessibility under WSLg: $output"
 
-    output="$(env -i PATH="$PATH" HOME="$HOME" CODEX_LINUX_RENDERING_MODE=default CODEX_FORCE_RENDERER_ACCESSIBILITY=0 "$launcher_probe" probe)"
+    output="$("$COREUTILS_ENV" -i PATH="$PATH" HOME="$HOME" CODEX_LINUX_RENDERING_MODE=default CODEX_FORCE_RENDERER_ACCESSIBILITY=0 "$launcher_probe" probe)"
     [[ "$output" == *"renderer_accessibility=0"* && "$output" != *"<--force-renderer-accessibility>"* ]] || fail "CODEX_FORCE_RENDERER_ACCESSIBILITY=0 must disable renderer accessibility under default Linux: $output"
 
-    output="$(env -i PATH="$PATH" HOME="$HOME" CODEX_LINUX_RENDERING_MODE=wslg "$launcher_probe" probe --wayland --use-gl=desktop)"
+    output="$("$COREUTILS_ENV" -i PATH="$PATH" HOME="$HOME" CODEX_LINUX_RENDERING_MODE=wslg "$launcher_probe" probe --wayland --use-gl=desktop)"
     [[ "$output" == *"<--ozone-platform=wayland>"* && "$output" == *"electron=<--use-gl=desktop>"* ]] || fail "explicit rendering args must override WSLg defaults: $output"
     [[ "$output" == *"gl_added=0"* && "$output" != *"<--use-gl=angle>"* ]] || fail "WSLg profile must not add ANGLE when a GL switch was supplied: $output"
 
-    output="$(env -i PATH="$PATH" HOME="$HOME" CODEX_LINUX_RENDERING_MODE=wslg "$launcher_probe" probe -- --disable-gpu)"
+    output="$("$COREUTILS_ENV" -i PATH="$PATH" HOME="$HOME" CODEX_LINUX_RENDERING_MODE=wslg "$launcher_probe" probe -- --disable-gpu)"
     [[ "$output" == *"gpu=1"* && "$output" == *"gpu_arg=1"* && "$output" == *"gl_added=0"* ]] || fail "pass-through --disable-gpu must suppress WSLg ANGLE without becoming a launcher GPU toggle: $output"
     [[ "$output" == *"electron=<--disable-gpu>"* && "$output" != *"<--disable-features=Vulkan>"* ]] || fail "pass-through --disable-gpu must not add launcher-only Vulkan flags: $output"
 
-    output="$(env -i PATH="$PATH" HOME="$HOME" CODEX_LINUX_RENDERING_MODE=wslg CODEX_ELECTRON_DISABLE_GPU_COMPOSITING=1 "$launcher_probe" probe)"
+    output="$("$COREUTILS_ENV" -i PATH="$PATH" HOME="$HOME" CODEX_LINUX_RENDERING_MODE=wslg CODEX_ELECTRON_DISABLE_GPU_COMPOSITING=1 "$launcher_probe" probe)"
     [[ "$output" == *"comp=1"* && "$output" == *"<--disable-gpu-compositing>"* ]] || fail "CODEX_ELECTRON_DISABLE_GPU_COMPOSITING=1 must force the compositor flag: $output"
 
-    output="$(env -i PATH="$PATH" HOME="$HOME" CODEX_LINUX_RENDERING_MODE=default CODEX_ELECTRON_DISABLE_GPU_COMPOSITING=1 "$launcher_probe" probe)"
+    output="$("$COREUTILS_ENV" -i PATH="$PATH" HOME="$HOME" CODEX_LINUX_RENDERING_MODE=default CODEX_ELECTRON_DISABLE_GPU_COMPOSITING=1 "$launcher_probe" probe)"
     [[ "$output" == *"comp=1"* && "$output" == *"<--disable-gpu-compositing>"* ]] || fail "CODEX_ELECTRON_DISABLE_GPU_COMPOSITING=1 must force the compositor flag under default Linux: $output"
 
-    output="$(env -i PATH="$PATH" HOME="$HOME" CODEX_LINUX_RENDERING_MODE=default CODEX_ELECTRON_DISABLE_GPU_COMPOSITING=0 "$launcher_probe" probe)"
+    output="$("$COREUTILS_ENV" -i PATH="$PATH" HOME="$HOME" CODEX_LINUX_RENDERING_MODE=default CODEX_ELECTRON_DISABLE_GPU_COMPOSITING=0 "$launcher_probe" probe)"
     [[ "$output" == *"comp=0"* && "$output" != *"<--disable-gpu-compositing>"* ]] || fail "CODEX_ELECTRON_DISABLE_GPU_COMPOSITING=0 must suppress the compositor flag: $output"
 
-    output="$(env -i PATH="$PATH" HOME="$HOME" WSL_INTEROP=/tmp/codex-wsl WAYLAND_DISPLAY=wayland-0 "$launcher_probe" probe)"
+    output="$("$COREUTILS_ENV" -i PATH="$PATH" HOME="$HOME" WSL_INTEROP=/tmp/codex-wsl WAYLAND_DISPLAY=wayland-0 "$launcher_probe" probe)"
     [[ "$output" == *"mode=wslg"* && "$output" == *"wslg=1"* ]] || fail "auto rendering mode must detect WSLg from WSL and GUI markers: $output"
 
     assert_contains "$REPO_DIR/launcher/start.sh.template" "warm_start_ipc_sent"
@@ -5311,7 +5322,7 @@ JS
 
     # Branch 1: no env var, no settings.json — only the plugin manifest gate runs.
     HOME="$fake_home" XDG_CONFIG_HOME= unset_env_value="" \
-        env -u CODEX_LINUX_ENABLE_COMPUTER_USE_UI HOME="$fake_home" XDG_CONFIG_HOME="$fake_home/.config" \
+        "$COREUTILS_ENV" -u CODEX_LINUX_ENABLE_COMPUTER_USE_UI HOME="$fake_home" XDG_CONFIG_HOME="$fake_home/.config" \
         node "$REPO_DIR/scripts/patch-linux-window-ui.js" "$extracted" >"$output_log" 2>&1
     assert_contains "$main_bundle" '(t===`darwin`||t===`linux`)&&e.computerUse'
     assert_not_contains "$main_bundle" 'return n===`linux`?{...e,computerUse:!0,computerUseNodeRepl:!0}'
@@ -5324,7 +5335,7 @@ JS
     printf '%s\n' "$renderer_body" > "$renderer_asset"
     printf '%s\n' "$install_flow_body" > "$install_flow_asset"
 
-    env CODEX_LINUX_ENABLE_COMPUTER_USE_UI=1 HOME="$fake_home" XDG_CONFIG_HOME="$fake_home/.config" \
+    "$COREUTILS_ENV" CODEX_LINUX_ENABLE_COMPUTER_USE_UI=1 HOME="$fake_home" XDG_CONFIG_HOME="$fake_home/.config" \
         node "$REPO_DIR/scripts/patch-linux-window-ui.js" "$extracted" >"$output_log" 2>&1
     assert_contains "$main_bundle" '(t===`darwin`||t===`linux`)&&e.computerUse'
     assert_contains "$main_bundle" 'return n===`linux`?{...e,computerUse:!0,computerUseNodeRepl:!0}'
@@ -5338,7 +5349,7 @@ JS
     printf '%s\n' "$install_flow_body" > "$install_flow_asset"
     printf '%s\n' '{"codex-linux-computer-use-ui-enabled": true}' > "$fake_home/.config/codex-desktop/settings.json"
 
-    env -u CODEX_LINUX_ENABLE_COMPUTER_USE_UI HOME="$fake_home" XDG_CONFIG_HOME="$fake_home/.config" \
+    "$COREUTILS_ENV" -u CODEX_LINUX_ENABLE_COMPUTER_USE_UI HOME="$fake_home" XDG_CONFIG_HOME="$fake_home/.config" \
         node "$REPO_DIR/scripts/patch-linux-window-ui.js" "$extracted" >"$output_log" 2>&1
     assert_contains "$main_bundle" 'return n===`linux`?{...e,computerUse:!0,computerUseNodeRepl:!0}'
     assert_contains "$renderer_asset" 'function hae(e){return e===`macOS`||e===`windows`||e===`linux`}'

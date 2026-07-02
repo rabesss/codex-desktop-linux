@@ -32,17 +32,17 @@ CI checks this file on every push and pull request. Scheduled/manual workflows o
 
 | Field | Value |
 | --- | --- |
-| Upstream app version | `26.623.70822` |
+| Upstream app version | `26.623.81905` |
 | DMG URL | `https://persistent.oaistatic.com/codex-app-prod/Codex.dmg` |
-| SHA-256 | `75e670b8948d262ac8ea3ad8f61149e3d0240a04e6ca0b6bc249ac54fd83d43e` |
-| Size | `529745413` bytes |
-| ETag | `0x8DED6048002F71C` |
-| Last-Modified | `Mon, 29 Jun 2026 17:33:14 GMT` |
-| Approved at | `2026-06-30T06:54:32Z` |
+| SHA-256 | `55540dbbf13b5aecb17eccbddc6a2b927af4b7b1fbc32f64c4c3a205960ea3fa` |
+| Size | `529648604` bytes |
+| ETag | `0x8DED72585387020` |
+| Last-Modified | `Wed, 01 Jul 2026 04:02:08 GMT` |
+| Approved at | `2026-07-02T04:05:32Z` |
 | Approved by | `manual` |
-| Minimum wrapper commit | `344787cde5d0d2c800ceac20883f1c3f0722a12b` |
+| Minimum wrapper commit | `14bca836d53aeb8d9b33f96e589f325ce9ad093c` |
 | Patch report | `patch-report.json` |
-| Notes | Passed local workstation patch validation for Codex 26.623.70822 on 2026-06-30. |
+| Notes | Promoted after local investigation of stale download-cache handling and smoke-test validation. |
 
 ## Candidate State
 
