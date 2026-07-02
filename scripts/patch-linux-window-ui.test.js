@@ -326,6 +326,10 @@ test("Linux composer file drop patch accepts native file drops", () => {
   const patched = applyPatchTwice(applyLinuxComposerFileDropPatch, source);
 
   assert.match(patched, /function codexLinuxHasDraggedFiles\(e\)/);
+  assert.match(patched, /function codexLinuxDragTypeMatches\(e\)/);
+  assert.match(patched, /application\/vnd\.portal\.files/);
+  assert.match(patched, /application\/vnd\.portal\.filetransfer/);
+  assert.match(patched, /text\/uri-list/);
   assert.match(patched, /function codexLinuxDroppedFileList\(e\)/);
   assert.match(patched, /d=e=>n!=null\|\|zh\(e\)\|\|nu\(e\)\|\|codexLinuxHasDraggedFiles\(e\)/);
   assert.match(patched, /codexLinuxDroppedFiles=codexLinuxDroppedFileList\(e\.dataTransfer\)/);
@@ -2244,6 +2248,23 @@ test("adds Linux build information to the app Help menu", () => {
     patched,
     /\{role:`about`,label:`About Codex`,click:\(\)=>\{codexLinuxConfigureAboutPanel\(\),codexLinuxShowBuildInfo\(\)\}\}/,
   );
+});
+
+test("routes current custom About dialog menu item to Linux build information", () => {
+  const source = [
+    "let a=require(`electron`),o=require(`node:fs`),s=require(`node:path`),r={et(){return{formatMessage(){return `About Codex`}}}};",
+    "var D4=`codex.aboutDialog.title`,O4=`About {appName}`;",
+    "async function U4({buildFlavor:e,parent:n}){throw Error(`Failed to get file icon.`)}",
+    "function e3(e){let ye={label:r.et().formatMessage({messageId:D4,defaultMessage:O4,values:{appName:a.app.getName()}}),click:(t,n)=>{U4({buildFlavor:e,parent:n instanceof a.BrowserWindow&&!n.isDestroyed()?n:null})}};let vt=[{role:`help`,id:t.fo.help,submenu:[{label:`Codex Documentation`,click:()=>{a.shell.openExternal(`https://developers.openai.com/codex/app`)}},{type:`separator`},ye]}];return a.Menu.buildFromTemplate(vt)}",
+  ].join("");
+  const patched = applyPatchTwice(applyLinuxBuildInfoTrayPatch, source);
+
+  assert.match(patched, /function codexLinuxShowBuildInfo\(\)/);
+  assert.match(
+    patched,
+    /process\.platform===`linux`\?\(codexLinuxConfigureAboutPanel\(\),codexLinuxShowBuildInfo\(\)\):U4\(\{buildFlavor:e,parent:n instanceof a\.BrowserWindow&&!n\.isDestroyed\(\)\?n:null\}\)/,
+  );
+  assert.doesNotThrow(() => new Function("t", patched));
 });
 
 test("adds Linux tray support for current minified window and startup identifiers", () => {

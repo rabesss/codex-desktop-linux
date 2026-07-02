@@ -973,6 +973,26 @@ function applyLinuxBuildInfoTrayPatch(currentSource) {
     });
   }
 
+  const customAboutDialogRegex =
+    /([A-Za-z_$][\w$]*=\{label:[A-Za-z_$][\w$]*\.et\(\)\.formatMessage\(\{messageId:[A-Za-z_$][\w$]*,defaultMessage:[A-Za-z_$][\w$]*,values:\{appName:([A-Za-z_$][\w$]*)\.app\.getName\(\)\}\}\),click:\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)=>\{)([A-Za-z_$][\w$]*)\(\{buildFlavor:([A-Za-z_$][\w$]*),parent:\4 instanceof \2\.BrowserWindow&&!\4\.isDestroyed\(\)\?\4:null\}\)(\}\})/g;
+  if (
+    canInstallHelper &&
+    !patchedSource.includes("process.platform===`linux`?(codexLinuxConfigureAboutPanel(),codexLinuxShowBuildInfo())")
+  ) {
+    let patchedCustomAbout = false;
+    patchedSource = patchedSource.replace(
+      customAboutDialogRegex,
+      (match, prefix, electronVarForAbout, _menuItemArg, parentVar, aboutFn, buildFlavorVar, suffix) => {
+        patchedCustomAbout = true;
+        changed = true;
+        return `${prefix}process.platform===\`linux\`?(codexLinuxConfigureAboutPanel(),codexLinuxShowBuildInfo()):${aboutFn}({buildFlavor:${buildFlavorVar},parent:${parentVar} instanceof ${electronVarForAbout}.BrowserWindow&&!${parentVar}.isDestroyed()?${parentVar}:null})${suffix}`;
+      },
+    );
+    if (!patchedCustomAbout && patchedSource.includes("aboutDialog.title")) {
+      console.warn("WARN: Could not find custom About dialog menu item — skipping Linux About dialog patch");
+    }
+  }
+
   if (!changed || hasHelper) {
     return patchedSource;
   }
