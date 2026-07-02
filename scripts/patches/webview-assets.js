@@ -1348,7 +1348,7 @@ function applyLinuxApiKeyLoginValidationPatch(currentSource) {
 }
 
 function applyLinuxComposerFileDropPatch(currentSource) {
-  if (currentSource.includes("function codexLinuxHasDraggedFiles(")) {
+  if (currentSource.includes("function codexLinuxDroppedFileDescriptors(")) {
     return currentSource;
   }
   if (!currentSource.includes("addFileMentionsFromFiles") || !currentSource.includes("dropTargetPortalTarget")) {
@@ -1356,7 +1356,7 @@ function applyLinuxComposerFileDropPatch(currentSource) {
   }
 
   const helper =
-    "function codexLinuxDragTypeMatches(e){return e===`Files`||e===`text/uri-list`||e===`x-special/gnome-copied-files`||e===`application/vnd.portal.files`||e===`application/vnd.portal.filetransfer`}function codexLinuxHasDraggedFiles(e){try{if(!e)return!1;let t=e.types;if(t)for(let n=0;n<t.length;n+=1)if(codexLinuxDragTypeMatches(t[n]))return!0;if(e.files&&e.files.length>0)return!0;if(e.items)for(let t=0;t<e.items.length;t+=1)if(e.items[t]?.kind===`file`)return!0}catch{}return!1}function codexLinuxDroppedFileList(e){let t=[];try{let n=new Set,r=i=>{if(!i||n.has(i))return;n.add(i),t.push(i)};if(e?.files)for(let t=0;t<e.files.length;t+=1)r(e.files.item?e.files.item(t):e.files[t]);if(e?.items)for(let t=0;t<e.items.length;t+=1){let n=e.items[t];if(n?.kind===`file`)try{r(typeof n.getAsFile===`function`?n.getAsFile():null)}catch{}}}catch{}return t}";
+    "function codexLinuxDragTypeMatches(e){return e===`Files`||e===`text/uri-list`||e===`x-special/gnome-copied-files`||e===`text/plain`||e===`text/plain;charset=utf-8`||e===`application/vnd.portal.files`||e===`application/vnd.portal.filetransfer`}function codexLinuxHasDraggedFiles(e){try{if(!e)return!1;let t=e.types;if(t)for(let n=0;n<t.length;n+=1)if(codexLinuxDragTypeMatches(t[n]))return!0;if(e.files&&e.files.length>0)return!0;if(e.items)for(let t=0;t<e.items.length;t+=1)if(e.items[t]?.kind===`file`)return!0}catch{}return!1}function codexLinuxDroppedFileList(e){let t=[];try{let n=new Set,r=i=>{if(!i||n.has(i))return;n.add(i),t.push(i)};if(e?.files)for(let t=0;t<e.files.length;t+=1)r(e.files.item?e.files.item(t):e.files[t]);if(e?.items)for(let t=0;t<e.items.length;t+=1){let n=e.items[t];if(n?.kind===`file`)try{r(typeof n.getAsFile===`function`?n.getAsFile():null)}catch{}}}catch{}return t}function codexLinuxDataTransferText(e,t){try{let n=e?.getData?.(t);return typeof n===`string`?n:``}catch{return``}}function codexLinuxPathFromUri(e){if(typeof e!==`string`)return null;let t=e.trim();if(t.length===0)return null;if(t.startsWith(`file://`))try{let e=new URL(t);return e.protocol===`file:`&&(!e.hostname||e.hostname===`localhost`)?decodeURIComponent(e.pathname):null}catch{try{return decodeURIComponent(t.replace(/^file:\\/\\/(localhost)?/u,``))}catch{return null}}return t.startsWith(`/`)?t:null}function codexLinuxFileDescriptor(e){let t=codexLinuxPathFromUri(e);if(!t||!t.startsWith(`/`))return null;let n=t.split(`/`).filter(Boolean).pop()||t;return{label:n,path:t,fsPath:t}}function codexLinuxDroppedFileDescriptors(e){let t=[],n=new Set,r=i=>{let a=codexLinuxFileDescriptor(i);a&&!n.has(a.fsPath)&&(n.add(a.fsPath),t.push(a))};try{for(let n of [`text/uri-list`,`x-special/gnome-copied-files`,`text/plain;charset=utf-8`,`text/plain`]){let i=codexLinuxDataTransferText(e,n);if(i)for(let e of i.split(/\\r?\\n/u)){let t=e.trim();t&&t[0]!==`#`&&t!==`copy`&&t!==`cut`&&r(t)}}}catch{}return t}function codexLinuxPortalTransferKey(e){for(let t of [`application/vnd.portal.filetransfer`,`application/vnd.portal.files`]){let n=codexLinuxDataTransferText(e,t).trim();if(n)return n}return``}";
   const insertionIndex = currentSource.indexOf("function _w(e)");
   if (insertionIndex === -1) {
     console.warn("WARN: Could not find composer drop handler insertion point — skipping Linux composer file drop patch");
@@ -1369,16 +1369,41 @@ function applyLinuxComposerFileDropPatch(currentSource) {
   const dragPatch = "d=e=>n!=null||zh(e)||nu(e)||codexLinuxHasDraggedFiles(e)";
   if (patchedSource.includes(dragNeedle)) {
     patchedSource = patchedSource.replace(dragNeedle, dragPatch);
+  } else if (patchedSource.includes(dragPatch)) {
+    // Older Linux-patched bundles already contain the drag predicate.
   } else {
     console.warn("WARN: Could not find composer drag acceptance predicate — skipping Linux composer file drop patch");
     return currentSource;
   }
 
+  const destructureNeedle = "activeBrowserImageDragBrowserTabId:n,addFileMentionsFromFiles:r,addImages:i";
+  const destructurePatch =
+    "activeBrowserImageDragBrowserTabId:n,addFileDescriptorsAsMentions:codexLinuxAddFileDescriptorsAsMentions,addFileMentionsFromFiles:r,addImages:i,uploadLocalFileAttachments:codexLinuxUploadLocalFileAttachments";
+  if (patchedSource.includes(destructureNeedle)) {
+    patchedSource = patchedSource.replace(destructureNeedle, destructurePatch);
+  } else {
+    console.warn("WARN: Could not find composer drop helper destructuring — skipping Linux composer file drop patch");
+    return currentSource;
+  }
+
+  const callSiteNeedle = "_w({activeBrowserImageDragBrowserTabId:ec,addFileMentionsFromFiles:ma,addImages:ga";
+  const callSitePatch =
+    "_w({activeBrowserImageDragBrowserTabId:ec,addFileDescriptorsAsMentions:pa,addFileMentionsFromFiles:ma,addImages:ga,uploadLocalFileAttachments:va";
+  if (patchedSource.includes(callSiteNeedle)) {
+    patchedSource = patchedSource.replace(callSiteNeedle, callSitePatch);
+  } else if (patchedSource.includes("addFileDescriptorsAsMentions:pa") && patchedSource.includes("uploadLocalFileAttachments:va")) {
+    console.warn("WARN: Could not find composer drop helper call site — URI-list file drops may be unavailable");
+  }
+
   const dropNeedle = "let{imageFiles:t,otherFiles:o}=nf(e.dataTransfer),s=nu(e.dataTransfer);";
-  const dropPatch =
+  const legacyDropNeedle =
     "let{imageFiles:t,otherFiles:o}=nf(e.dataTransfer),s=nu(e.dataTransfer),codexLinuxDroppedFiles=codexLinuxDroppedFileList(e.dataTransfer);t.length===0&&o.length===0&&codexLinuxDroppedFiles.length>0&&(o=codexLinuxDroppedFiles);";
+  const dropPatch =
+    "let{imageFiles:t,otherFiles:o}=nf(e.dataTransfer),s=nu(e.dataTransfer),codexLinuxDroppedFiles=codexLinuxDroppedFileList(e.dataTransfer),codexLinuxDroppedDescriptors=codexLinuxDroppedFileDescriptors(e.dataTransfer),codexLinuxDroppedPortalKey=codexLinuxPortalTransferKey(e.dataTransfer),codexLinuxAttachDroppedDescriptors=t=>{typeof codexLinuxUploadLocalFileAttachments===`function`?codexLinuxUploadLocalFileAttachments(t):typeof codexLinuxAddFileDescriptorsAsMentions===`function`&&codexLinuxAddFileDescriptorsAsMentions(t)};t.length===0&&o.length===0&&codexLinuxDroppedFiles.length>0&&(o=codexLinuxDroppedFiles);if(t.length===0&&o.length===0&&codexLinuxDroppedDescriptors.length>0){e.preventDefault(),e.stopPropagation?.(),codexLinuxAttachDroppedDescriptors(codexLinuxDroppedDescriptors);return}if(t.length===0&&o.length===0&&codexLinuxDroppedPortalKey&&typeof window.electronBridge?.codexLinuxRetrievePortalFiles===`function`){e.preventDefault(),e.stopPropagation?.(),window.electronBridge.codexLinuxRetrievePortalFiles(codexLinuxDroppedPortalKey).then(e=>{Array.isArray(e)&&e.length>0&&codexLinuxAttachDroppedDescriptors(e)}).catch(()=>{});return}";
   if (patchedSource.includes(dropNeedle)) {
     patchedSource = patchedSource.replace(dropNeedle, dropPatch);
+  } else if (patchedSource.includes(legacyDropNeedle)) {
+    patchedSource = patchedSource.replace(legacyDropNeedle, dropPatch);
   } else {
     console.warn("WARN: Could not find composer drop file extraction — skipping Linux composer file drop patch");
     return currentSource;

@@ -87,6 +87,10 @@ const {
   validateReport,
 } = require("./ci/validate-patch-report.js");
 const {
+  applyLinuxPortalFileDropMainPatch,
+  applyLinuxPortalFileDropPreloadPatch,
+} = require("./patches/portal-file-drop.js");
+const {
   requiredPatchNamesForProfile,
 } = require("./patches/registry.js");
 const {
@@ -322,18 +326,72 @@ test("Linux composer file drop patch accepts native file drops", () => {
     "function _w(e){let t=(0,vw.c)(52),{activeBrowserImageDragBrowserTabId:n,addFileMentionsFromFiles:r,addImages:i,directBrowserConversationId:a,dragCounterRef:o,dropTargetPortalTarget:s,isDragActive:c,setIsDragActive:l,setShowShiftOverlay:u}=e,d;",
     "t[0]===n?d=t[1]:(d=e=>n!=null||zh(e)||nu(e),t[0]=n,t[1]=d);",
     "let C=e=>{let{imageFiles:t,otherFiles:o}=nf(e.dataTransfer),s=nu(e.dataTransfer);if(t.length===0&&o.length===0&&!s){zh(e.dataTransfer)&&e.preventDefault();return}e.preventDefault(),t.length===0||i(t),(o.length>0||s&&t.length===0)&&r(o,e.dataTransfer)}}",
+    "let ec,pa,ma,ga,va,ve,fo,V,Qa,eo,ro;_w({activeBrowserImageDragBrowserTabId:ec,addFileMentionsFromFiles:ma,addImages:ga,directBrowserConversationId:ve,dragCounterRef:fo,dropTargetPortalTarget:V,isDragActive:Qa,setIsDragActive:eo,setShowShiftOverlay:ro});",
   ].join("");
   const patched = applyPatchTwice(applyLinuxComposerFileDropPatch, source);
 
   assert.match(patched, /function codexLinuxHasDraggedFiles\(e\)/);
   assert.match(patched, /function codexLinuxDragTypeMatches\(e\)/);
+  assert.match(patched, /function codexLinuxDroppedFileDescriptors\(e\)/);
+  assert.match(patched, /function codexLinuxPathFromUri\(e\)/);
   assert.match(patched, /application\/vnd\.portal\.files/);
   assert.match(patched, /application\/vnd\.portal\.filetransfer/);
   assert.match(patched, /text\/uri-list/);
+  assert.match(patched, /x-special\/gnome-copied-files/);
   assert.match(patched, /function codexLinuxDroppedFileList\(e\)/);
+  assert.match(patched, /function codexLinuxPortalTransferKey\(e\)/);
   assert.match(patched, /d=e=>n!=null\|\|zh\(e\)\|\|nu\(e\)\|\|codexLinuxHasDraggedFiles\(e\)/);
+  assert.match(patched, /addFileDescriptorsAsMentions:codexLinuxAddFileDescriptorsAsMentions/);
+  assert.match(patched, /uploadLocalFileAttachments:codexLinuxUploadLocalFileAttachments/);
+  assert.match(patched, /addFileDescriptorsAsMentions:pa,addFileMentionsFromFiles:ma/);
+  assert.match(patched, /addImages:ga,uploadLocalFileAttachments:va/);
   assert.match(patched, /codexLinuxDroppedFiles=codexLinuxDroppedFileList\(e\.dataTransfer\)/);
+  assert.match(patched, /codexLinuxDroppedDescriptors=codexLinuxDroppedFileDescriptors\(e\.dataTransfer\)/);
+  assert.match(patched, /codexLinuxDroppedPortalKey=codexLinuxPortalTransferKey\(e\.dataTransfer\)/);
   assert.match(patched, /codexLinuxDroppedFiles\.length>0&&\(o=codexLinuxDroppedFiles\)/);
+  assert.match(patched, /codexLinuxAttachDroppedDescriptors\(codexLinuxDroppedDescriptors\)/);
+  assert.match(patched, /window\.electronBridge\.codexLinuxRetrievePortalFiles\(codexLinuxDroppedPortalKey\)/);
+});
+
+test("Linux composer file drop patch upgrades older MIME-only file drop patch", () => {
+  const source = [
+    "function codexLinuxDragTypeMatches(e){return e===`Files`||e===`text/uri-list`}function codexLinuxHasDraggedFiles(e){return!0}function codexLinuxDroppedFileList(e){return[]}",
+    "function _w(e){let t=(0,vw.c)(52),{activeBrowserImageDragBrowserTabId:n,addFileMentionsFromFiles:r,addImages:i,directBrowserConversationId:a,dragCounterRef:o,dropTargetPortalTarget:s,isDragActive:c,setIsDragActive:l,setShowShiftOverlay:u}=e,d;",
+    "t[0]===n?d=t[1]:(d=e=>n!=null||zh(e)||nu(e)||codexLinuxHasDraggedFiles(e),t[0]=n,t[1]=d);",
+    "let C=e=>{let{imageFiles:t,otherFiles:o}=nf(e.dataTransfer),s=nu(e.dataTransfer),codexLinuxDroppedFiles=codexLinuxDroppedFileList(e.dataTransfer);t.length===0&&o.length===0&&codexLinuxDroppedFiles.length>0&&(o=codexLinuxDroppedFiles);if(t.length===0&&o.length===0&&!s){zh(e.dataTransfer)&&e.preventDefault();return}e.preventDefault(),t.length===0||i(t),(o.length>0||s&&t.length===0)&&r(o,e.dataTransfer)}}",
+    "let ec,pa,ma,ga,va,ve,fo,V,Qa,eo,ro;_w({activeBrowserImageDragBrowserTabId:ec,addFileMentionsFromFiles:ma,addImages:ga,directBrowserConversationId:ve,dragCounterRef:fo,dropTargetPortalTarget:V,isDragActive:Qa,setIsDragActive:eo,setShowShiftOverlay:ro});",
+  ].join("");
+  const patched = applyPatchTwice(applyLinuxComposerFileDropPatch, source);
+
+  assert.match(patched, /function codexLinuxDroppedFileDescriptors\(e\)/);
+  assert.match(patched, /codexLinuxDroppedDescriptors=codexLinuxDroppedFileDescriptors\(e\.dataTransfer\)/);
+  assert.match(patched, /codexLinuxDroppedPortalKey=codexLinuxPortalTransferKey\(e\.dataTransfer\)/);
+  assert.match(patched, /codexLinuxAttachDroppedDescriptors\(codexLinuxDroppedDescriptors\)/);
+});
+
+test("Linux portal file drop preload bridge exposes renderer method", () => {
+  const source = [
+    "let e=require(`electron`);",
+    "var D={windowType:m,sendMessageFromView:async t=>{await e.ipcRenderer.invoke(h,t)},getPathForFile:t=>e.webUtils.getPathForFile(t)||null,sendWorkerMessageFromView:async(t,n)=>{await e.ipcRenderer.invoke(f(t),n)}};",
+    "e.contextBridge.exposeInMainWorld(`electronBridge`,D);",
+  ].join("");
+  const patched = applyPatchTwice(applyLinuxPortalFileDropPreloadPatch, source);
+
+  assert.match(patched, /codexLinuxRetrievePortalFiles:async t=>e\.ipcRenderer\.invoke\(`codex_linux:retrieve-portal-files`,t\)/);
+});
+
+test("Linux portal file drop main bridge registers trusted RetrieveFiles IPC handler", () => {
+  const source = [
+    "let a=require(`electron`);let f=require(`node:child_process`);",
+    "var ree=`codex_desktop:message-from-view`;function eu(e){return`codex_desktop:worker:${e}:from-view`}function tu(e){return`codex_desktop:worker:${e}:for-view`}var nu=`CODEX_ELECTRON_DEV_PARENT_PID`;",
+    "function _4(e){let{nativeContextMenuIconSearchRoots:l,isTrustedIpcEvent:k}=e;U2(l,k),z2(k);let A=!1;a.ipcMain.handle(ree,async(e,n)=>{if(!k(e))return})}",
+  ].join("");
+  const patched = applyPatchTwice(applyLinuxPortalFileDropMainPatch, source);
+
+  assert.match(patched, /codexLinuxRetrievePortalFiles\(e\)/);
+  assert.match(patched, /org\.freedesktop\.portal\.FileTransfer\.RetrieveFiles/);
+  assert.match(patched, /codexLinuxRegisterPortalFileDropHandler\(a\.ipcMain,k\)/);
+  assert.match(patched, /t\(e\)\?await codexLinuxRetrievePortalFiles\(n\):\[\]/);
 });
 
 test("Linux UI font alias maps upstream Geist usage to bundled fonts", () => {
@@ -804,6 +862,8 @@ test("default core patch descriptors are grouped and unique", () => {
     "linux-set-icon",
     "linux-opaque-background",
     "linux-owl-feature-binding-fallback",
+    "linux-portal-file-drop-main",
+    "linux-portal-file-drop-preload",
     "linux-avatar-overlay-mouse-passthrough",
     "linux-file-manager",
     "linux-tray",
