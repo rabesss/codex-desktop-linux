@@ -57,8 +57,8 @@ Nix packaging is a separate validation surface from the default updater approval
 
 | Field | Value |
 | --- | --- |
-| Nix Codex app version | `26.623.70822` |
-| Nix Codex DMG SRI hash | `sha256-deZwuJSNJirI6jrY9hFJ49AkCgTmygtrwkmsVP2D1D4=` |
+| Nix Codex app version | `26.623.81905` |
+| Nix Codex DMG SRI hash | `sha256-VVQNu/E7Wuyxfsy93Gorknr0t7H7wy9kxMOiBZYOo/o=` |
 | Nix bundled Codex CLI | `0.141.0` |
 | Nix Electron runtime | `42.1.0` |
 
