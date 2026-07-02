@@ -1347,6 +1347,46 @@ function applyLinuxApiKeyLoginValidationPatch(currentSource) {
   return currentSource;
 }
 
+function applyLinuxComposerFileDropPatch(currentSource) {
+  if (currentSource.includes("function codexLinuxHasDraggedFiles(")) {
+    return currentSource;
+  }
+  if (!currentSource.includes("addFileMentionsFromFiles") || !currentSource.includes("dropTargetPortalTarget")) {
+    return currentSource;
+  }
+
+  const helper =
+    "function codexLinuxHasDraggedFiles(e){try{if(!e)return!1;let t=e.types;if(t)for(let n=0;n<t.length;n+=1)if(t[n]===`Files`)return!0;if(e.files&&e.files.length>0)return!0;if(e.items)for(let t=0;t<e.items.length;t+=1)if(e.items[t]?.kind===`file`)return!0}catch{}return!1}function codexLinuxDroppedFileList(e){let t=[];try{let n=new Set,r=i=>{if(!i||n.has(i))return;n.add(i),t.push(i)};if(e?.files)for(let t=0;t<e.files.length;t+=1)r(e.files.item?e.files.item(t):e.files[t]);if(e?.items)for(let t=0;t<e.items.length;t+=1){let n=e.items[t];if(n?.kind===`file`)try{r(typeof n.getAsFile===`function`?n.getAsFile():null)}catch{}}}catch{}return t}";
+  const insertionIndex = currentSource.indexOf("function _w(e)");
+  if (insertionIndex === -1) {
+    console.warn("WARN: Could not find composer drop handler insertion point — skipping Linux composer file drop patch");
+    return currentSource;
+  }
+
+  let patchedSource = currentSource.slice(0, insertionIndex) + helper + currentSource.slice(insertionIndex);
+
+  const dragNeedle = "d=e=>n!=null||zh(e)||nu(e)";
+  const dragPatch = "d=e=>n!=null||zh(e)||nu(e)||codexLinuxHasDraggedFiles(e)";
+  if (patchedSource.includes(dragNeedle)) {
+    patchedSource = patchedSource.replace(dragNeedle, dragPatch);
+  } else {
+    console.warn("WARN: Could not find composer drag acceptance predicate — skipping Linux composer file drop patch");
+    return currentSource;
+  }
+
+  const dropNeedle = "let{imageFiles:t,otherFiles:o}=nf(e.dataTransfer),s=nu(e.dataTransfer);";
+  const dropPatch =
+    "let{imageFiles:t,otherFiles:o}=nf(e.dataTransfer),s=nu(e.dataTransfer),codexLinuxDroppedFiles=codexLinuxDroppedFileList(e.dataTransfer);t.length===0&&o.length===0&&codexLinuxDroppedFiles.length>0&&(o=codexLinuxDroppedFiles);";
+  if (patchedSource.includes(dropNeedle)) {
+    patchedSource = patchedSource.replace(dropNeedle, dropPatch);
+  } else {
+    console.warn("WARN: Could not find composer drop file extraction — skipping Linux composer file drop patch");
+    return currentSource;
+  }
+
+  return patchedSource;
+}
+
 function patchCommentPreloadBundle(extractedDir) {
   const commentPreloadBundle = path.join(extractedDir, ".vite", "build", "comment-preload.js");
   if (!fs.existsSync(commentPreloadBundle)) {
@@ -1381,6 +1421,7 @@ module.exports = {
   applyLinuxStatsigWorkspaceTypePatch,
   applyLinuxFastModeModelGuardPatch,
   applyLinuxApiKeyLoginValidationPatch,
+  applyLinuxComposerFileDropPatch,
   applyLocalEnvironmentActionModalDraftPatch,
   applySubagentNicknameMetadataPatch,
   patchCommentPreloadBundle,

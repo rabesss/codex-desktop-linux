@@ -106,6 +106,7 @@ const {
   applyLinuxSafeMonospaceFontStackPatch,
   applyLinuxStatsigWorkspaceTypePatch,
   applyLinuxApiKeyLoginValidationPatch: applyLinuxApiKeyLoginValidationPatchDirect,
+  applyLinuxComposerFileDropPatch,
   patchLinuxUiFontAlias,
 } = require("./patches/webview-assets.js");
 const { patchAssetFiles } = require("./patches/shared.js");
@@ -314,6 +315,21 @@ test("Linux safe monospace font stack patch warns when the unsafe stack drifts",
   assert.equal(value, source);
   assert.equal(warnings.length, 1);
   assert.match(warnings[0], /Could not find Linux monospace font stack insertion point/);
+});
+
+test("Linux composer file drop patch accepts native file drops", () => {
+  const source = [
+    "function _w(e){let t=(0,vw.c)(52),{activeBrowserImageDragBrowserTabId:n,addFileMentionsFromFiles:r,addImages:i,directBrowserConversationId:a,dragCounterRef:o,dropTargetPortalTarget:s,isDragActive:c,setIsDragActive:l,setShowShiftOverlay:u}=e,d;",
+    "t[0]===n?d=t[1]:(d=e=>n!=null||zh(e)||nu(e),t[0]=n,t[1]=d);",
+    "let C=e=>{let{imageFiles:t,otherFiles:o}=nf(e.dataTransfer),s=nu(e.dataTransfer);if(t.length===0&&o.length===0&&!s){zh(e.dataTransfer)&&e.preventDefault();return}e.preventDefault(),t.length===0||i(t),(o.length>0||s&&t.length===0)&&r(o,e.dataTransfer)}}",
+  ].join("");
+  const patched = applyPatchTwice(applyLinuxComposerFileDropPatch, source);
+
+  assert.match(patched, /function codexLinuxHasDraggedFiles\(e\)/);
+  assert.match(patched, /function codexLinuxDroppedFileList\(e\)/);
+  assert.match(patched, /d=e=>n!=null\|\|zh\(e\)\|\|nu\(e\)\|\|codexLinuxHasDraggedFiles\(e\)/);
+  assert.match(patched, /codexLinuxDroppedFiles=codexLinuxDroppedFileList\(e\.dataTransfer\)/);
+  assert.match(patched, /codexLinuxDroppedFiles\.length>0&&\(o=codexLinuxDroppedFiles\)/);
 });
 
 test("Linux UI font alias maps upstream Geist usage to bundled fonts", () => {
@@ -824,6 +840,7 @@ test("default core patch descriptors are grouped and unique", () => {
     "linux-ui-font-alias",
     "subagent-nickname-metadata-shape",
     "local-environment-action-modal-draft",
+    "linux-composer-file-drop",
     "linux-computer-use-ui-availability",
     "linux-computer-use-install-flow",
     "linux-computer-use-detail-route-fallback",
@@ -2210,14 +2227,22 @@ test("adds Linux build information to current tray menu shape", () => {
 
 test("adds Linux build information to the app Help menu", () => {
   const source =
-    "let n=require(`electron`),o=require(`node:fs`),i=require(`node:path`),e={bn:{help:`help`}};let $e=[{role:`help`,id:e.bn.help,submenu:[{label:`Codex Documentation`,click:()=>{n.shell.openExternal(`https://developers.openai.com/codex/app`)}}]}],et=n.Menu.buildFromTemplate($e);n.Menu.setApplicationMenu(et);";
+    "let n=require(`electron`),o=require(`node:fs`),i=require(`node:path`),e={bn:{help:`help`}};let $e=[{role:`help`,id:e.bn.help,submenu:[{label:`Codex Documentation`,click:()=>{n.shell.openExternal(`https://developers.openai.com/codex/app`)}},{role:`about`,label:`About Codex`}]}],et=n.Menu.buildFromTemplate($e);n.Menu.setApplicationMenu(et);";
   const patched = applyPatchTwice(applyLinuxBuildInfoTrayPatch, source);
 
   assert.match(patched, /function codexLinuxShowBuildInfo\(\)/);
+  assert.match(patched, /function codexLinuxConfigureAboutPanel\(\)/);
+  assert.match(patched, /app\?\.setAboutPanelOptions\?\.\(/);
+  assert.match(patched, /applicationVersion:r/);
+  assert.match(patched, /version:n/);
   assert.doesNotThrow(() => new Function(patched));
   assert.match(
     patched,
     /\{role:`help`,id:e\.bn\.help,submenu:\[\.\.\.process\.platform===`linux`\?\[\{label:`Build Information`,click:\(\)=>\{codexLinuxShowBuildInfo\(\)\}\},\{type:`separator`\}\]:\[\],\{label:`Codex Documentation`/,
+  );
+  assert.match(
+    patched,
+    /\{role:`about`,label:`About Codex`,click:\(\)=>\{codexLinuxConfigureAboutPanel\(\),codexLinuxShowBuildInfo\(\)\}\}/,
   );
 });
 
